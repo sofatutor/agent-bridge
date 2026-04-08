@@ -78,6 +78,7 @@ export async function initCommand(cwd?: string): Promise<void> {
       const name = await p.text({
         message: 'Custom tool name (used for <tool>-- prefix matching)',
         placeholder: 'windsurf',
+        defaultValue: '',
         validate: (v) => {
           if (!v.trim()) return 'Tool name cannot be empty';
           if (tools.some((t) => t.name === v.trim())) return 'Tool name already used';
@@ -88,6 +89,7 @@ export async function initCommand(cwd?: string): Promise<void> {
       const folder = await p.text({
         message: `Target folder for "${name}"`,
         placeholder: `.${name}`,
+        defaultValue: '',
         validate: (v) => {
           if (!v.trim()) return 'Folder cannot be empty';
           if (tools.some((t) => t.folder === v.trim())) return 'Folder already used by another tool';
@@ -119,6 +121,7 @@ export async function initCommand(cwd?: string): Promise<void> {
     const name = await p.text({
       message: 'Source name',
       placeholder: 'company-standards',
+      defaultValue: '',
       validate: (v) => {
         if (!v.trim()) return 'Source name cannot be empty';
         if (sources.some((s) => s.name === v.trim()))
@@ -130,6 +133,7 @@ export async function initCommand(cwd?: string): Promise<void> {
     const source = await p.text({
       message: 'Source URL or local path',
       placeholder: 'https://github.com/org/repo.git',
+      defaultValue: '',
       validate: (v) => {
         if (!v.trim()) return 'Source URL/path cannot be empty';
       },
@@ -148,6 +152,7 @@ export async function initCommand(cwd?: string): Promise<void> {
       const branch = await p.text({
         message: 'Branch (leave empty for remote default)',
         placeholder: 'main',
+        defaultValue: '',
       });
       if (p.isCancel(branch)) return false;
       if (branch.trim()) {

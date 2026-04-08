@@ -186,6 +186,42 @@ describe('syncSource (remote)', () => {
     expect(result.action).toBe('updated');
     expect(result.error).toBeUndefined();
   });
+
+  it('clones a remote source without a branch (uses remote default)', async () => {
+    const bareRepo = await createBareRepo(tmpDir);
+    const repoRoot = join(tmpDir, 'host');
+    await mkdir(repoRoot, { recursive: true });
+
+    const source: SourceConfig = {
+      name: 'hub',
+      source: `file://${bareRepo}`,
+    };
+    const result = await syncSource(repoRoot, source);
+    expect(result.action).toBe('cloned');
+    expect(result.error).toBeUndefined();
+
+    expect(await dirExists(sourceDir(repoRoot, 'hub'))).toBe(true);
+    expect(
+      await dirExists(join(sourceDir(repoRoot, 'hub'), 'shared', 'skills', 'foundation'))
+    ).toBe(true);
+  });
+
+  it('updates a remote source without a branch', async () => {
+    const bareRepo = await createBareRepo(tmpDir);
+    const repoRoot = join(tmpDir, 'host');
+    await mkdir(repoRoot, { recursive: true });
+
+    const source: SourceConfig = {
+      name: 'hub',
+      source: `file://${bareRepo}`,
+    };
+
+    await syncSource(repoRoot, source);
+
+    const result = await syncSource(repoRoot, source);
+    expect(result.action).toBe('updated');
+    expect(result.error).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------

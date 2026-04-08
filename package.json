@@ -6,7 +6,8 @@
   "main": "dist/index.mjs",
   "types": "dist/index.d.mts",
   "bin": {
-    "agent-bridge": "dist/index.mjs"
+    "agent-bridge": "dist/index.mjs",
+    "ai-agent": "dist/index.mjs"
   },
   "files": [
     "dist"

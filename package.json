@@ -1,0 +1,34 @@
+{
+  "name": "@sofatutor/agent-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.mjs",
+  "types": "dist/index.d.mts",
+  "bin": {
+    "agent-bridge": "dist/index.mjs"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "check": "vp run typecheck && vp test",
+    "check:viteplus": "vp check",
+    "dev": "vp pack --watch",
+    "test": "vp test",
+    "test:watch": "vp test watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.9.1",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0",
+    "vite-plus": "^0.1.15"
+  },
+  "packageManager": "npm@11.12.1",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

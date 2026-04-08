@@ -1,0 +1,16 @@
+domains:
+  - backend
+  - frontend
+  - shared
+
+tools:
+  - name: vscode
+    folder: .github
+  - name: cursor
+    folder: .cursor
+  - name: claude
+    folder: .claude
+
+sources:
+  - name: local-source
+    source: /Volumes/workspace/sofatutor/code/agent-bridge/example/local-source

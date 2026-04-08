@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+*.log
+
+# Environment variables
+.env*
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary files
+*.tmp
+*.temp
+
+# Yarn files
+.yarn/cache
+.yarn/install-state.gz
+.pnp.*
+
+# Monorepo temp
+tmp/*
+
+# AWS CDK artifacts
+cdk.out/
+**/cdk.out/
+**/cdk.out/manifest.json
+cdk.context.json
+**/cdk.context.json
+
+# TypeScript build info
+**/*.tsbuildinfo

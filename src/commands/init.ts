@@ -146,12 +146,13 @@ export async function initCommand(cwd?: string): Promise<void> {
     // Ask for branch if remote
     if (isRemoteSource(entry.source)) {
       const branch = await p.text({
-        message: 'Branch',
+        message: 'Branch (leave empty for remote default)',
         placeholder: 'main',
-        defaultValue: 'main',
       });
       if (p.isCancel(branch)) return false;
-      entry.branch = branch.trim();
+      if (branch.trim()) {
+        entry.branch = branch.trim();
+      }
     }
 
     sources.push(entry);

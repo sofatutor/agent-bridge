@@ -27,11 +27,14 @@ export async function cloneSource(
   source: SourceConfig
 ): Promise<void> {
   const dest = sourceDir(repoRoot, source.name);
-  const branch = source.branch ?? 'main';
 
   await mkdir(bridgeDir(repoRoot), { recursive: true });
+
+  const branchArgs = source.branch
+    ? `--single-branch --branch ${source.branch}`
+    : '';
   execSync(
-    `git clone --depth 1 --single-branch --branch ${branch} ${source.source} ${dest}`,
+    `git clone --depth 1 ${branchArgs} ${source.source} ${dest}`,
     { stdio: 'pipe' }
   );
 }
@@ -41,13 +44,14 @@ export async function fetchSource(
   source: SourceConfig
 ): Promise<void> {
   const dest = sourceDir(repoRoot, source.name);
-  const branch = source.branch ?? 'main';
 
   exec('git fetch --prune origin', dest);
 
-  const currentBranch = exec('git rev-parse --abbrev-ref HEAD', dest);
-  if (currentBranch !== branch) {
-    exec(`git checkout ${branch}`, dest);
+  if (source.branch) {
+    const currentBranch = exec('git rev-parse --abbrev-ref HEAD', dest);
+    if (currentBranch !== source.branch) {
+      exec(`git checkout ${source.branch}`, dest);
+    }
   }
 
   try {

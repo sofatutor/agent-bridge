@@ -260,11 +260,6 @@ describe('reconcileSymlinks', () => {
     await mkdir(join(sourceRoot, 'shared', 'skills', 'deploy'), {
       recursive: true,
     });
-    await writeFile(
-      join(sourceRoot, 'shared', 'skills', 'deploy', 'SKILL.md'),
-      '# Deploy',
-      'utf-8'
-    );
   });
 
   afterEach(async () => {
@@ -301,7 +296,7 @@ describe('reconcileSymlinks', () => {
     expect(result.removed).toBe(0);
 
     // Verify symlinks
-    const link = join(repoRoot, '.github', 'skills', 'foundation', 'SKILL.md');
+    const link = join(repoRoot, '.github', 'skills', 'foundation');
     const stats = await lstat(link);
     expect(stats.isSymbolicLink()).toBe(true);
   });
@@ -367,11 +362,6 @@ describe('reconcileSymlinks', () => {
     await mkdir(join(sourceRoot, 'shared', 'cursor--instructions', 'my-rule'), {
       recursive: true,
     });
-    await writeFile(
-      join(sourceRoot, 'shared', 'cursor--instructions', 'my-rule', 'instructions.md'),
-      '# Rule',
-      'utf-8'
-    );
 
     const features: Feature[] = [
       {
@@ -403,7 +393,7 @@ describe('reconcileSymlinks', () => {
     expect(result.added).toBe(3);
 
     // my-rule should exist in .cursor but not .github
-    const cursorLink = join(repoRoot, '.cursor', 'instructions', 'my-rule', 'instructions.md');
+    const cursorLink = join(repoRoot, '.cursor', 'instructions', 'my-rule');
     expect((await lstat(cursorLink)).isSymbolicLink()).toBe(true);
   });
 
@@ -442,11 +432,6 @@ describe('reconcileSymlinks', () => {
     await mkdir(join(sourceRoot, 'shared', 'agents', 'helper'), {
       recursive: true,
     });
-    await writeFile(
-      join(sourceRoot, 'shared', 'agents', 'helper', 'AGENT.md'),
-      '# Helper',
-      'utf-8'
-    );
 
     // First reconcile with skills + agents
     const allFeatures: Feature[] = [
@@ -470,7 +455,7 @@ describe('reconcileSymlinks', () => {
     await reconcileSymlinks(repoRoot, config, allFeatures);
 
     // Verify agent symlink was created
-    const agentLink = join(repoRoot, '.github', 'agents', 'helper', 'AGENT.md');
+    const agentLink = join(repoRoot, '.github', 'agents', 'helper');
     expect((await lstat(agentLink)).isSymbolicLink()).toBe(true);
 
     // Second reconcile with only skills (agents entirely removed)
@@ -502,11 +487,6 @@ describe('reconcileSymlinks', () => {
     await mkdir(join(sourceRoot, 'shared', 'agents', 'helper'), {
       recursive: true,
     });
-    await writeFile(
-      join(sourceRoot, 'shared', 'agents', 'helper', 'AGENT.md'),
-      '# Helper',
-      'utf-8'
-    );
 
     // Reconcile with agents feature
     const features: Feature[] = [

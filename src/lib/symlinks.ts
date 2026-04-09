@@ -1,7 +1,7 @@
 import { symlink, readlink, unlink, lstat, mkdir, readdir, rmdir } from 'node:fs/promises';
 import { join, relative, dirname } from 'node:path';
 import type { BridgeConfig } from './config.js';
-import { dirExists, listFilesRecursive } from './fs.js';
+import { dirExists } from './fs.js';
 import {
   type Feature,
   featureMatchesTool,
@@ -35,24 +35,6 @@ export function buildSymlinkEntry(
 ): SymlinkEntry {
   const linkPath = join(repoRoot, toolFolder, featureType, featureName);
   return { linkPath, targetPath: absoluteTargetPath };
-}
-
-/**
- * Build symlink entries for each file inside a feature directory.
- * Instead of one symlink per feature folder, creates one symlink per file.
- */
-export async function buildFileSymlinkEntries(
-  repoRoot: string,
-  toolFolder: string,
-  featureType: string,
-  featureName: string,
-  absoluteFeaturePath: string
-): Promise<SymlinkEntry[]> {
-  const files = await listFilesRecursive(absoluteFeaturePath);
-  return files.map((relFile) => ({
-    linkPath: join(repoRoot, toolFolder, featureType, featureName, relFile),
-    targetPath: join(absoluteFeaturePath, relFile),
-  }));
 }
 
 export async function checkPathConflict(linkPath: string): Promise<boolean> {
@@ -140,25 +122,6 @@ export async function removeEmptyParents(
 }
 
 // ---------------------------------------------------------------------------
-// Collect all symlinks recursively under a directory
-// ---------------------------------------------------------------------------
-
-async function collectSymlinks(dir: string): Promise<string[]> {
-  const result: string[] = [];
-  const entries = await readdir(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = join(dir, entry.name);
-    if (entry.isSymbolicLink()) {
-      result.push(fullPath);
-    } else if (entry.isDirectory()) {
-      const sub = await collectSymlinks(fullPath);
-      result.push(...sub);
-    }
-  }
-  return result;
-}
-
-// ---------------------------------------------------------------------------
 // Reconciliation (high-level)
 // ---------------------------------------------------------------------------
 
@@ -177,50 +140,49 @@ export async function reconcileSymlinks(
   let updated = 0;
   let removed = 0;
 
-  // Phase 1: Compute all expected file-level symlink entries
-  const expectedEntries = new Map<string, SymlinkEntry>();
+  const expectedLinks = new Set<string>();
 
   for (const tool of config.tools) {
     for (const feature of features) {
       if (!featureMatchesTool(feature, tool.name)) continue;
 
       const linkName = symlinkName(feature);
-      const entries = await buildFileSymlinkEntries(
+      const entry = buildSymlinkEntry(
         repoRoot,
         tool.folder,
         feature.displayType,
         linkName,
         feature.absolutePath
       );
+      expectedLinks.add(entry.linkPath);
 
-      for (const entry of entries) {
-        expectedEntries.set(entry.linkPath, entry);
-      }
+      const valid = await isSymlinkValid(entry.linkPath, entry.targetPath);
+      if (valid) continue;
+
+      const result = await createSymlink(entry);
+      if (result === 'created') added++;
+      else if (result === 'updated') updated++;
     }
-  }
 
-  // Phase 2: Remove orphaned symlinks (handles migration from dir-level too)
-  for (const tool of config.tools) {
+    // Remove orphaned symlinks — scan all subdirs of the tool folder
     const toolDir = join(repoRoot, tool.folder);
     if (!(await dirExists(toolDir))) continue;
 
-    const allSymlinks = await collectSymlinks(toolDir);
-    for (const link of allSymlinks) {
-      if (expectedEntries.has(link)) continue;
-      await removeSymlink(link);
-      await removeEmptyParents(dirname(link), toolDir);
-      removed++;
+    const typeDirs = await readdir(toolDir, { withFileTypes: true });
+    for (const typeDir of typeDirs) {
+      if (!typeDir.isDirectory()) continue;
+      const typePath = join(toolDir, typeDir.name);
+      const entries = await readdir(typePath, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = join(typePath, entry.name);
+        if (!entry.isSymbolicLink()) continue;
+        if (expectedLinks.has(fullPath)) continue;
+
+        await removeSymlink(fullPath);
+        await removeEmptyParents(typePath, toolDir);
+        removed++;
+      }
     }
-  }
-
-  // Phase 3: Create / update file-level symlinks
-  for (const [, entry] of expectedEntries) {
-    const valid = await isSymlinkValid(entry.linkPath, entry.targetPath);
-    if (valid) continue;
-
-    const result = await createSymlink(entry);
-    if (result === 'created') added++;
-    else if (result === 'updated') updated++;
   }
 
   return { added, updated, removed };

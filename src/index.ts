@@ -15,7 +15,6 @@ const HELP_TEXT = `
 agent-bridge — Manage AI tool configurations from multiple sources
 
 Usage: agent-bridge <command> [options]
-       ai-agent <command> [options]
 
 Commands:
   init     Initialize Agent Bridge (creates .agent-bridge/config.yml)

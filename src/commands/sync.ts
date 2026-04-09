@@ -9,7 +9,7 @@ import {
   symlinkName,
 } from '../lib/manifest.js';
 import {
-  buildSymlinkEntry,
+  buildFileSymlinkEntries,
   checkPathConflict,
   reconcileSymlinks,
 } from '../lib/symlinks.js';
@@ -86,15 +86,17 @@ export async function syncCommand(cwd?: string): Promise<void> {
       if (!featureMatchesTool(feature, tool.name)) continue;
 
       const linkName = symlinkName(feature);
-      const entry = buildSymlinkEntry(
+      const entries = await buildFileSymlinkEntries(
         repoRoot,
         tool.folder,
         feature.displayType,
         linkName,
         feature.absolutePath
       );
-      if (await checkPathConflict(entry.linkPath)) {
-        conflicts.push(entry.linkPath);
+      for (const entry of entries) {
+        if (await checkPathConflict(entry.linkPath)) {
+          conflicts.push(entry.linkPath);
+        }
       }
     }
   }

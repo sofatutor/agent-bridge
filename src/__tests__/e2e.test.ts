@@ -142,29 +142,29 @@ describe('end-to-end integration', () => {
     expect(result.added).toBeGreaterThan(0);
 
     // Verify symlinks exist
-    const foundationLinkVscode = join(repoRoot, '.github', 'skills', 'foundation');
+    const foundationLinkVscode = join(repoRoot, '.github', 'skills', 'foundation', 'SKILL.md');
     const stats = await lstat(foundationLinkVscode);
     expect(stats.isSymbolicLink()).toBe(true);
 
     // Verify cursor-specific feature only in .cursor
-    const cursorRuleLink = join(repoRoot, '.cursor', 'instructions', 'my-rule');
+    const cursorRuleLink = join(repoRoot, '.cursor', 'instructions', 'my-rule', 'RULE.md');
     expect((await lstat(cursorRuleLink)).isSymbolicLink()).toBe(true);
 
     // cursor--instructions should NOT appear in .github
     let vscodeInstructionsExists = false;
     try {
-      await lstat(join(repoRoot, '.github', 'instructions', 'my-rule'));
+      await lstat(join(repoRoot, '.github', 'instructions', 'my-rule', 'RULE.md'));
       vscodeInstructionsExists = true;
     } catch {}
     expect(vscodeInstructionsExists).toBe(false);
 
     // Verify local source features are symlinked too
-    const localSkillLink = join(repoRoot, '.github', 'skills', 'local-skill');
+    const localSkillLink = join(repoRoot, '.github', 'skills', 'local-skill', 'SKILL.md');
     expect((await lstat(localSkillLink)).isSymbolicLink()).toBe(true);
 
     // Verify local source symlink points to the actual local path (not a copy)
     const localSkillTarget = await readlink(localSkillLink);
-    const expectedRel = relative(dirname(localSkillLink), join(localPath, 'shared', 'skills', 'local-skill'));
+    const expectedRel = relative(dirname(localSkillLink), join(localPath, 'shared', 'skills', 'local-skill', 'SKILL.md'));
     expect(localSkillTarget).toBe(expectedRel);
 
     // --- Step 5: Re-sync is idempotent ---

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
-import { mkdtemp, rm, mkdir, writeFile, access, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, access } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,11 +9,11 @@ import {
   syncSource,
   syncAllSources,
   removeStaleSourceDirs,
-  ensureBridgeGitignore,
+
   cloneSource,
   fetchSource,
 } from '../lib/sources.js';
-import { type SourceConfig, type BridgeConfig, sourceDir, bridgeDir } from '../lib/config.js';
+import { type SourceConfig, type BridgeConfig, sourceDir } from '../lib/config.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -320,34 +320,4 @@ describe('removeStaleSourceDirs', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// ensureBridgeGitignore
-// ---------------------------------------------------------------------------
 
-describe('ensureBridgeGitignore', () => {
-  let tmpDir: string;
-
-  beforeEach(async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), 'agent-bridge-gi-'));
-  });
-
-  afterEach(async () => {
-    await rm(tmpDir, { recursive: true, force: true });
-  });
-
-  it('creates .gitignore that ignores everything except config.yml', async () => {
-    const config: BridgeConfig = {
-      domains: ['shared'],
-      tools: [{ name: 'vscode', folder: '.github' }],
-      sources: [],
-    };
-
-    await ensureBridgeGitignore(tmpDir, config);
-
-    const giPath = join(bridgeDir(tmpDir), '.gitignore');
-    const content = await readFile(giPath, 'utf-8');
-    expect(content).toContain('*');
-    expect(content).toContain('!config.yml');
-    expect(content).toContain('!.gitignore');
-  });
-});

@@ -4,7 +4,6 @@ import {
   rm,
   mkdir,
   writeFile,
-  readFile,
   lstat,
   readlink,
 } from 'node:fs/promises';
@@ -16,10 +15,9 @@ import {
   loadConfig,
   validateConfig,
   configPath,
-  bridgeDir,
   type BridgeConfig,
 } from '../lib/config.js';
-import { syncAllSources, ensureBridgeGitignore } from '../lib/sources.js';
+import { syncAllSources } from '../lib/sources.js';
 import { discoverFeatureTypes, scanFeatures, detectDuplicates } from '../lib/manifest.js';
 import { reconcileSymlinks } from '../lib/symlinks.js';
 
@@ -109,7 +107,6 @@ describe('end-to-end integration', () => {
     };
 
     await saveConfig(repoRoot, config);
-    await ensureBridgeGitignore(repoRoot, config);
 
     // Verify config was saved
     const loaded = await loadConfig(repoRoot);
@@ -119,10 +116,6 @@ describe('end-to-end integration', () => {
     // Verify config validates
     const validation = validateConfig(loaded);
     expect(validation.ok).toBe(true);
-
-    // Verify .gitignore was created
-    const giContent = await readFile(join(bridgeDir(repoRoot), '.gitignore'), 'utf-8');
-    expect(giContent).toContain('!config.yml');
 
     // --- Step 2: Sync sources ---
     const sourceResults = await syncAllSources(repoRoot, config);

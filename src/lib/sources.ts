@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { mkdir, readdir, rm, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, readdir, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import {
   type SourceConfig,
@@ -181,22 +181,4 @@ export async function removeStaleSourceDirs(
   return removed;
 }
 
-// ---------------------------------------------------------------------------
-// Ensure .gitignore in .agent-bridge/
-// ---------------------------------------------------------------------------
 
-export async function ensureBridgeGitignore(
-  repoRoot: string,
-  config: BridgeConfig
-): Promise<void> {
-  const bridge = bridgeDir(repoRoot);
-  await mkdir(bridge, { recursive: true });
-
-  const gitignorePath = join(bridge, '.gitignore');
-
-  // Ignore everything except config.yml and .gitignore itself
-  const lines = ['# Ignore cloned sources', '*', '!config.yml', '!.gitignore'];
-  const content = lines.join('\n') + '\n';
-
-  await writeFile(gitignorePath, content, 'utf-8');
-}

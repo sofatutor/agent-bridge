@@ -10,7 +10,7 @@ import {
   type SourceConfig,
 } from '../lib/config.js';
 import { findRepoRoot } from '../lib/git.js';
-import { ensureBridgeGitignore, syncAllSources } from '../lib/sources.js';
+import { syncAllSources } from '../lib/sources.js';
 
 const WELL_KNOWN_TOOLS = [
   { value: { name: 'vscode', folder: '.github' }, label: 'VS Code (.github/)' },
@@ -192,7 +192,6 @@ export async function initCommand(cwd?: string): Promise<void> {
   };
 
   await saveConfig(repoRoot, config);
-  await ensureBridgeGitignore(repoRoot, config);
   p.log.success('Saved .agent-bridge/config.yml');
 
   // Clone remote sources

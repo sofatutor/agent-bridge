@@ -14,7 +14,7 @@ export interface Feature {
   name: string;
   /** Raw feature-type directory name (may contain tool prefix) */
   type: string;
-  /** Display type with tool prefix stripped (used for symlink dir) */
+  /** Display type with tool prefix stripped (used for destination dir) */
   displayType: string;
   source: string;
   domain: string;
@@ -59,12 +59,15 @@ export function featureMatchesTool(
   return feature.toolPrefix === toolName;
 }
 
-export function symlinkName(feature: Feature): string {
+export function featureName(feature: Feature): string {
   if (feature.toolPrefix) {
     return parseToolPrefix(feature.name).baseName;
   }
   return feature.name;
 }
+
+/** @deprecated Use featureName instead */
+export const symlinkName = featureName;
 
 // ---------------------------------------------------------------------------
 // Discovery
@@ -150,7 +153,7 @@ export function detectDuplicates(features: Feature[]): DuplicateConflict[] {
   const byKey = new Map<string, Feature[]>();
 
   for (const f of features) {
-    const linkName = symlinkName(f);
+    const linkName = featureName(f);
     const key = `${f.displayType}/${linkName}`;
     const group = byKey.get(key) ?? [];
     group.push(f);
@@ -161,7 +164,7 @@ export function detectDuplicates(features: Feature[]): DuplicateConflict[] {
   for (const [, group] of byKey) {
     if (group.length > 1) {
       conflicts.push({
-        name: symlinkName(group[0]),
+        name: featureName(group[0]),
         type: group[0].type,
         paths: group.map((f) => f.absolutePath),
       });

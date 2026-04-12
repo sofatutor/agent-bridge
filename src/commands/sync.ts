@@ -6,12 +6,12 @@ import {
   scanFeatures,
   detectDuplicates,
   featureMatchesTool,
-  symlinkName,
+  featureName,
 } from '../lib/manifest.js';
 import {
-  buildFileSymlinkEntries,
+  featureDestPath,
   checkPathConflict,
-  reconcileSymlinks,
+  reconcileFeatures,
 } from '../lib/symlinks.js';
 import { syncAllSources, removeStaleSourceDirs } from '../lib/sources.js';
 
@@ -85,18 +85,15 @@ export async function syncCommand(cwd?: string): Promise<void> {
     for (const feature of features) {
       if (!featureMatchesTool(feature, tool.name)) continue;
 
-      const linkName = symlinkName(feature);
-      const entries = await buildFileSymlinkEntries(
+      const linkName = featureName(feature);
+      const dest = featureDestPath(
         repoRoot,
         tool.folder,
         feature.displayType,
-        linkName,
-        feature.absolutePath
+        linkName
       );
-      for (const entry of entries) {
-        if (await checkPathConflict(entry.linkPath)) {
-          conflicts.push(entry.linkPath);
-        }
+      if (await checkPathConflict(dest)) {
+        conflicts.push(dest);
       }
     }
   }
@@ -112,12 +109,12 @@ export async function syncCommand(cwd?: string): Promise<void> {
 
   s.stop('No path conflicts');
 
-  // --- Phase 4: Reconcile symlinks ---
-  s.start('Reconciling symlinks…');
+  // --- Phase 4: Reconcile features ---
+  s.start('Reconciling features…');
 
-  const result = await reconcileSymlinks(repoRoot, config, features);
+  const result = await reconcileFeatures(repoRoot, config, features);
 
-  s.stop('Symlinks reconciled');
+  s.stop('Features reconciled');
 
   p.log.info(
     `Added: ${result.added}  Updated: ${result.updated}  Removed: ${result.removed}`

@@ -1,25 +1,17 @@
 # Agent Bridge
 
-A CLI tool that syncs AI agent configurations (skills, agents, prompts, ...etc.) from shared sources into your project's IDE directories (`.github/`, `.cursor/`, `.claude/`, ..etc.).
+A CLI tool that syncs AI agent configurations (skills, agents, prompts, ...etc.) from shared sources into your project's tool directories (`.github/`, `.cursor/`, `.claude/`, ..etc.).
 
 ### Why Agent Bridge?
 
-As teams adopt AI-powered IDEs, agent instructions quickly scatter across projects with no shared structure. Agent Bridge solves this by letting you **centralize and distribute** AI agent features across any number of projects, teams, and repositories.
+As teams adopt AI coding tools, agent instructions quickly scatter across projects with no shared structure. Agent Bridge solves this by letting you **centralize and distribute** AI agent features across any number of projects, teams, and repositories — using **conventions over configuration**, with no manifests or mapping files required.
 
 - **Convention over configuration** — features are discovered from the filesystem automatically. No manifests, no mapping files — just organize by domain and feature type.
-- **IDE-agnostic, IDE-aware** — syncs to all configured tools by default, while the `<tool>--` prefix convention lets you target features to specific IDEs (VS Code, Cursor, Claude Code, or custom tools) when needed.
-- **Future-proof** — not limited to skills, agents, prompts, or instructions. Any new feature type that IDEs introduce is automatically supported — just add a folder to your source.
+- **Tool-agnostic, tool-aware** — syncs to all configured tools by default, while the `<tool>--` prefix convention lets you target features to specific tools (VS Code, Cursor, Claude Code, or custom tools) when needed.
+- **Extensible** — not limited to skills, agents, prompts, or instructions. Any new feature type that tools introduce is automatically supported — just add a folder to your source.
 - **Multiple sources** — pull from any combination of Git repositories (HTTPS/SSH) and local paths. Mix company-wide standards with team-specific or project-specific sources.
 - **Multi-domain organization** — structure features by domain (`backend`, `frontend`, `shared`, or your own) so each project pulls only what it needs.
-- **Symlink-based, non-destructive** — IDE folders contain only symlinks managed by Agent Bridge. Existing files and directories are **never** touched, modified, or deleted.
-
-## Features
-
-- **Multi-source** — pull from multiple Git repositories (HTTPS/SSH) and local paths
-- **Domain-based organization** — organize features by domain (`backend`, `frontend`, `shared`)
-- **Tool-specific routing** — use the `<tool>--` prefix convention to target features to specific IDEs
-- **Symlink-based** — no file duplication; your IDE folders contain symlinks to source features
-- **Convention over configuration** — features are discovered from the filesystem, no manifest needed
+- **Non-destructive** — previously defined skills, agents, prompts, and other tool files are **never** touched, modified, or deleted.
 
 ## Prerequisites
 
@@ -68,7 +60,7 @@ After init, commit `.agent-bridge/config.yml` to your repo.
 agent-bridge sync
 ```
 
-Fetches remote sources, discovers features, and creates symlinks in your IDE folders.
+Fetches remote sources, discovers features, and copies them into your tool folders.
 
 Run this whenever:
 - A source repository has new or changed features.
@@ -83,120 +75,14 @@ agent-bridge update
 
 Pulls the latest changes from all remote sources. Local sources require no update.
 
-After updating, run `agent-bridge sync` to reconcile symlinks.
-
-## Configuration
-
-The config lives at `.agent-bridge/config.yml`:
-
-```yaml
-domains: [backend, frontend, shared]
-
-tools:
-  - name: vscode
-    folder: .github
-  - name: cursor
-    folder: .cursor
-  - name: claude
-    folder: .claude
-
-sources:
-  # Git over HTTPS
-  - name: remote-source
-    source: https://github.com/sofatutor/agent-hub.git
-    branch: main
-
-  # Git over SSH
-  - name: remote-source-ssh
-    source: git@github.com:sofatutor/agent-hub.git
-    branch: main
-
-  # Local path (read directly, not cloned)
-  - name: local-source
-    source: /absolute/path/to/local/repo
-```
-
-### Fields
-
-| Field              | Description                                                                                       |
-| ------------------ | ------------------------------------------------------------------------------------------------- |
-| `domains`          | List of domain folders to scan in each source (e.g. `backend`, `frontend`, `shared`)              |
-| `tools`            | IDE/tool declarations. `name` is used for prefix matching, `folder` is where symlinks are created |
-| `sources`          | Where to pull features from. Can be Git repos (HTTPS, SSH) or local filesystem paths              |
-| `sources[].branch` | Git branch to clone/track (remote sources only)                                                   |
-
-## Source Types
-
-| Type           | Example                           | Behavior                                             |
-| -------------- | --------------------------------- | ---------------------------------------------------- |
-| **HTTPS Git**  | `https://github.com/org/repo.git` | Cloned into `.agent-bridge/<name>/`, fetched on sync |
-| **SSH Git**    | `git@github.com:org/repo.git`     | Cloned into `.agent-bridge/<name>/`, fetched on sync |
-| **Local path** | `/absolute/path/to/repo`          | Read directly from the path (not cloned)             |
-
-> **Note:** Local source paths must be absolute in `config.yml`. If you enter a
-> relative path during `agent-bridge init`, it will be resolved to absolute
-> automatically.
-
-## Symlink Strategy
-
-Symlinks created by agent-bridge use **relative targets** on disk (e.g.
-`../../../local-source/shared/skills/foundation`), even though the config stores
-absolute paths. This is intentional:
-
-- **Portable** — the project directory can be moved without breaking symlinks.
-- **Works across machines** — different users and CI environments have different
-  absolute paths; relative symlinks remain valid as long as the project tree
-  structure is intact.
-- **Git-friendly** — Git stores symlink targets as-is; relative targets are
-  consistent across clones.
-
-This is the same pattern used by tools like `npm link` and `pnpm`. If sources
-change location, simply update `config.yml` and re-run `agent-bridge sync`.
-
-## Source Directory Structure
-
-Each source is expected to contain domain folders, each with feature type folders:
-
-```
-<source>/
-  shared/
-    skills/
-      foundation/
-        SKILL.md
-    agents/
-      helper/
-        AGENT.md
-    cursor--instructions/     # Tool-specific feature type (Cursor only)
-      my-rule/
-  backend/
-    skills/
-      deploy/
-        SKILL.md
-```
-
-## Tool-Specific Prefix Convention
-
-Features and feature types can be scoped to a specific tool using the `<tool>--` prefix:
-
-| Source path                            | Synced to    | Symlink name           |
-| -------------------------------------- | ------------ | ---------------------- |
-| `shared/skills/foundation/`            | All tools    | `skills/foundation`    |
-| `shared/cursor--instructions/my-rule/` | Cursor only  | `instructions/my-rule` |
-| `shared/vscode--prompts/my-prompt/`    | VS Code only | `prompts/my-prompt`    |
-| `backend/skills/cursor--code-review/`  | Cursor only  | `skills/code-review`   |
-
-Rules:
-1. The separator is a **double dash** (`--`)
-2. The prefix is **stripped** from the symlink name
-3. Features **without** a prefix sync to **all** tools
-4. Works at both the feature type level and the feature level
+After updating, run `agent-bridge sync` to reconcile features.
 
 ## CLI Commands
 
 | Command               | Description                                            |
 | --------------------- | ------------------------------------------------------ |
 | `agent-bridge init`   | Interactive setup — creates `.agent-bridge/config.yml` |
-| `agent-bridge sync`   | Fetch sources, discover features, reconcile symlinks   |
+| `agent-bridge sync`   | Fetch sources, discover features, reconcile files      |
 | `agent-bridge update` | Fetch latest changes for all remote sources            |
 
 ### Global Options
@@ -215,73 +101,21 @@ agent-bridge sync --cwd ./packages/api
 agent-bridge sync --cwd /path/to/my-project
 ```
 
-## How It Works
+## Documentation
 
-After running `agent-bridge sync`, your project looks like:
-
-```
-my-project/
-├── .agent-bridge/
-│   ├── config.yml                # Your configuration
-│   ├── .gitignore                # Ignores cloned source dirs
-│   └── company-hub/              # Cloned remote source
-│       └── shared/skills/…
-│
-├── .github/                      # VS Code
-│   ├── skills/
-│   │   ├── foundation → ../../.agent-bridge/company-hub/shared/skills/foundation
-│   │   └── deploy → ../../.agent-bridge/company-hub/backend/skills/deploy
-│   └── prompts/
-│       └── my-prompt → …
-│
-├── .cursor/                      # Cursor
-│   ├── skills/
-│   │   └── foundation → …
-│   └── instructions/             # cursor--instructions → instructions
-│       └── my-rule → …
-│
-└── .claude/                      # Claude
-    └── skills/
-        └── foundation → …
-```
-
-## Cleanup Behavior
-
-When features are removed from a source and you re-run `agent-bridge sync`:
-
-- Orphaned symlinks are detected and removed automatically.
-- Empty parent directories left behind (e.g. `.github/agents/` after all agents are removed) are cleaned up.
-- Real files and directories are **never** deleted — only symlinks managed by agent-bridge are touched.
-
-## .gitignore
-
-The `.agent-bridge/.gitignore` is auto-generated to ignore cloned sources while keeping `config.yml` tracked:
-
-```gitignore
-*
-!config.yml
-!.gitignore
-```
-
-## Authoring Features
-
-Features live inside source repositories organized by domain and feature type:
-
-1. Create a directory under `<domain>/<feature-type>/<feature-name>/` in a source repo.
-2. Add your files inside it (e.g. `SKILL.md`, `AGENT.md`).
-3. Run `agent-bridge sync` in each host repo to pick up the new feature.
-
-Feature names must be unique across all sources (after tool-prefix stripping). Duplicates cause sync to halt with an error.
+- [Configuration](docs/configuration.md) — config file reference, fields, source types
+- [Conventions](docs/conventions.md) — source directory structure, tool-prefix routing, authoring features
+- [Sync Strategy](docs/sync-strategy.md) — marker files, project structure after sync, cleanup behavior
 
 ## Troubleshooting
 
-| Symptom                           | Fix                                                                  |
-| --------------------------------- | -------------------------------------------------------------------- |
-| `config.yml not found`            | Run `agent-bridge init` from the repo root                           |
-| Symlinks point to missing targets | Run `agent-bridge sync` to reconcile                                 |
-| Source clone failed               | Check the Git URL and your SSH/HTTPS credentials                     |
-| Duplicate feature name error      | Rename one of the conflicting features across sources                |
-| Local source path not found       | Verify the path in `config.yml` is correct relative to the repo root |
+| Symptom                      | Fix                                                                  |
+| ---------------------------- | -------------------------------------------------------------------- |
+| `config.yml not found`       | Run `agent-bridge init` from the repo root                           |
+| Source clone failed          | Check the Git URL and your SSH/HTTPS credentials                     |
+| Duplicate feature name error | Rename one of the conflicting features across sources                |
+| Local source path not found  | Verify the path in `config.yml` is correct relative to the repo root |
+| Path conflict error          | A non-managed folder exists at the destination — rename or remove it |
 
 ## Development
 

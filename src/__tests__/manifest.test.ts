@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import {
   parseToolPrefix,
   featureMatchesTool,
-  symlinkName,
+  featureName,
   discoverFeatureTypes,
   scanFeatures,
   detectDuplicates,
@@ -118,15 +118,15 @@ describe('featureMatchesTool', () => {
 // symlinkName
 // ---------------------------------------------------------------------------
 
-describe('symlinkName', () => {
+describe('featureName', () => {
   it('returns the raw name when no prefix', () => {
     const f = featureStub({ name: 'foundation', toolPrefix: undefined });
-    expect(symlinkName(f)).toBe('foundation');
+    expect(featureName(f)).toBe('foundation');
   });
 
   it('strips the tool prefix', () => {
     const f = featureStub({ name: 'cursor--code-review', toolPrefix: 'cursor' });
-    expect(symlinkName(f)).toBe('code-review');
+    expect(featureName(f)).toBe('code-review');
   });
 });
 

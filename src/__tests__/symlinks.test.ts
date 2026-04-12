@@ -1,17 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vite-plus/test';
-import { mkdtemp, rm, mkdir, writeFile, readlink, lstat, readdir, access } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, readFile, readdir, access, lstat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, relative, dirname } from 'node:path';
+import { join } from 'node:path';
 import {
-  resolveRelativePath,
-  buildSymlinkEntry,
+  featureDestPath,
   checkPathConflict,
-  createSymlink,
-  removeSymlink,
-  isSymlinkValid,
+  syncFeature,
   removeEmptyParents,
-  reconcileSymlinks,
+  reconcileFeatures,
 } from '../lib/symlinks.js';
+import { hasMarker, MARKER_FILENAME } from '../lib/fs.js';
 import type { BridgeConfig } from '../lib/config.js';
 import type { Feature } from '../lib/manifest.js';
 
@@ -32,37 +30,13 @@ function featureStub(overrides: Partial<Feature> = {}): Feature {
 }
 
 // ---------------------------------------------------------------------------
-// resolveRelativePath
+// featureDestPath
 // ---------------------------------------------------------------------------
 
-describe('resolveRelativePath', () => {
-  it('computes relative path from link to target', () => {
-    const from = '/repo/.github/skills/foundation';
-    const to = '/repo/.agent-bridge/hub/shared/skills/foundation';
-    const rel = resolveRelativePath(from, to);
-    expect(rel).toBe(
-      relative(dirname(from), to)
-    );
-  });
-});
-
-// ---------------------------------------------------------------------------
-// buildSymlinkEntry
-// ---------------------------------------------------------------------------
-
-describe('buildSymlinkEntry', () => {
-  it('builds a symlink entry with absolute target', () => {
-    const entry = buildSymlinkEntry(
-      '/repo',
-      '.github',
-      'skills',
-      'foundation',
-      '/repo/.agent-bridge/hub/shared/skills/foundation'
-    );
-    expect(entry.linkPath).toBe('/repo/.github/skills/foundation');
-    expect(entry.targetPath).toBe(
-      '/repo/.agent-bridge/hub/shared/skills/foundation'
-    );
+describe('featureDestPath', () => {
+  it('builds the destination path for a feature', () => {
+    const dest = featureDestPath('/repo', '.github', 'skills', 'foundation');
+    expect(dest).toBe('/repo/.github/skills/foundation');
   });
 });
 
@@ -74,7 +48,7 @@ describe('checkPathConflict', () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), 'agent-bridge-sym-'));
+    tmpDir = await mkdtemp(join(tmpdir(), 'agent-bridge-conflict-'));
   });
 
   afterEach(async () => {
@@ -85,160 +59,98 @@ describe('checkPathConflict', () => {
     expect(await checkPathConflict(join(tmpDir, 'nope'))).toBe(false);
   });
 
-  it('returns true for a real file', async () => {
-    const f = join(tmpDir, 'real-file');
-    await writeFile(f, 'hello', 'utf-8');
-    expect(await checkPathConflict(f)).toBe(true);
-  });
-
-  it('returns true for a real directory', async () => {
+  it('returns true for a real directory without marker', async () => {
     const d = join(tmpDir, 'real-dir');
     await mkdir(d);
     expect(await checkPathConflict(d)).toBe(true);
   });
+
+  it('returns false for a directory with .agentbridge marker', async () => {
+    const d = join(tmpDir, 'managed-dir');
+    await mkdir(d);
+    await writeFile(join(d, MARKER_FILENAME), '', 'utf-8');
+    expect(await checkPathConflict(d)).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
-// createSymlink / isSymlinkValid / removeSymlink
+// syncFeature
 // ---------------------------------------------------------------------------
 
-describe('createSymlink', () => {
+describe('syncFeature', () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), 'agent-bridge-sym-'));
+    tmpDir = await mkdtemp(join(tmpdir(), 'agent-bridge-sync-'));
   });
 
   afterEach(async () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it('creates a new symlink and returns "created"', async () => {
-    const target = join(tmpDir, 'target');
-    await mkdir(target, { recursive: true });
-    await writeFile(join(target, 'SKILL.md'), '# Skill', 'utf-8');
+  it('copies files and creates marker for a new feature', async () => {
+    const source = join(tmpDir, 'source-feature');
+    await mkdir(source, { recursive: true });
+    await writeFile(join(source, 'SKILL.md'), '# My Skill', 'utf-8');
 
-    const linkPath = join(tmpDir, '.github', 'skills', 'my-skill');
-    const entry = { linkPath, targetPath: target };
-
-    const result = await createSymlink(entry);
+    const dest = join(tmpDir, '.github', 'skills', 'my-skill');
+    const result = await syncFeature(source, dest);
     expect(result).toBe('created');
 
-    const stats = await lstat(linkPath);
-    expect(stats.isSymbolicLink()).toBe(true);
+    // File was copied
+    const content = await readFile(join(dest, 'SKILL.md'), 'utf-8');
+    expect(content).toBe('# My Skill');
 
-    const linkTarget = await readlink(linkPath);
-    const expectedRel = relative(dirname(linkPath), target);
-    expect(linkTarget).toBe(expectedRel);
+    // Marker exists
+    expect(await hasMarker(dest)).toBe(true);
+
+    // It's a real file, not a symlink
+    const stats = await lstat(join(dest, 'SKILL.md'));
+    expect(stats.isFile()).toBe(true);
+    expect(stats.isSymbolicLink()).toBe(false);
   });
 
-  it('returns "updated" when symlink already points to correct target', async () => {
-    const target = join(tmpDir, 'target');
-    await mkdir(target, { recursive: true });
+  it('returns "updated" when re-syncing an existing feature', async () => {
+    const source = join(tmpDir, 'source-feature');
+    await mkdir(source, { recursive: true });
+    await writeFile(join(source, 'SKILL.md'), '# V1', 'utf-8');
 
-    const linkPath = join(tmpDir, '.github', 'skills', 'my-skill');
-    const entry = { linkPath, targetPath: target };
+    const dest = join(tmpDir, '.github', 'skills', 'my-skill');
+    await syncFeature(source, dest);
 
-    await createSymlink(entry);
-    const result = await createSymlink(entry);
-    expect(result).toBe('updated');
-  });
+    // Update source
+    await writeFile(join(source, 'SKILL.md'), '# V2', 'utf-8');
 
-  it('updates symlink when target changes', async () => {
-    const target1 = join(tmpDir, 'target1');
-    const target2 = join(tmpDir, 'target2');
-    await mkdir(target1, { recursive: true });
-    await mkdir(target2, { recursive: true });
-
-    const linkPath = join(tmpDir, '.github', 'skills', 'my-skill');
-
-    await createSymlink({ linkPath, targetPath: target1 });
-    const result = await createSymlink({ linkPath, targetPath: target2 });
+    const result = await syncFeature(source, dest);
     expect(result).toBe('updated');
 
-    const linkTarget = await readlink(linkPath);
-    const expectedRel = relative(dirname(linkPath), target2);
-    expect(linkTarget).toBe(expectedRel);
+    // New content is in place
+    const content = await readFile(join(dest, 'SKILL.md'), 'utf-8');
+    expect(content).toBe('# V2');
+
+    // Marker still present
+    expect(await hasMarker(dest)).toBe(true);
   });
 
-  it('throws on path conflict (real file exists)', async () => {
-    const linkPath = join(tmpDir, '.github', 'skills', 'my-skill');
-    await mkdir(dirname(linkPath), { recursive: true });
-    await writeFile(linkPath, 'I am a real file', 'utf-8');
+  it('copies nested directory structure', async () => {
+    const source = join(tmpDir, 'source-feature');
+    await mkdir(join(source, 'sub'), { recursive: true });
+    await writeFile(join(source, 'SKILL.md'), '# Top', 'utf-8');
+    await writeFile(join(source, 'sub', 'extra.md'), '# Sub', 'utf-8');
 
-    const entry = { linkPath, targetPath: join(tmpDir, 'target') };
-    await expect(createSymlink(entry)).rejects.toThrow('Path conflict');
-  });
-});
+    const dest = join(tmpDir, '.github', 'skills', 'my-skill');
+    await syncFeature(source, dest);
 
-describe('isSymlinkValid', () => {
-  let tmpDir: string;
-
-  beforeEach(async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), 'agent-bridge-sym-'));
-  });
-
-  afterEach(async () => {
-    await rm(tmpDir, { recursive: true, force: true });
-  });
-
-  it('returns true for valid symlink', async () => {
-    const target = join(tmpDir, 'target');
-    await mkdir(target, { recursive: true });
-    const linkPath = join(tmpDir, 'link');
-    await createSymlink({ linkPath, targetPath: target });
-
-    expect(await isSymlinkValid(linkPath, target)).toBe(true);
-  });
-
-  it('returns false for non-existent path', async () => {
-    expect(await isSymlinkValid(join(tmpDir, 'nope'), '/target')).toBe(false);
-  });
-
-  it('returns false when target differs', async () => {
-    const target1 = join(tmpDir, 'target1');
-    const target2 = join(tmpDir, 'target2');
-    await mkdir(target1, { recursive: true });
-    await mkdir(target2, { recursive: true });
-    const linkPath = join(tmpDir, 'link');
-    await createSymlink({ linkPath, targetPath: target1 });
-
-    expect(await isSymlinkValid(linkPath, target2)).toBe(false);
-  });
-});
-
-describe('removeSymlink', () => {
-  let tmpDir: string;
-
-  beforeEach(async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), 'agent-bridge-sym-'));
-  });
-
-  afterEach(async () => {
-    await rm(tmpDir, { recursive: true, force: true });
-  });
-
-  it('removes a symlink', async () => {
-    const target = join(tmpDir, 'target');
-    await mkdir(target, { recursive: true });
-    const linkPath = join(tmpDir, 'link');
-    await createSymlink({ linkPath, targetPath: target });
-
-    await removeSymlink(linkPath);
-    await expect(lstat(linkPath)).rejects.toThrow();
-  });
-
-  it('does nothing for non-existent path', async () => {
-    await removeSymlink(join(tmpDir, 'nope'));
-    // no throw = pass
+    expect(await readFile(join(dest, 'SKILL.md'), 'utf-8')).toBe('# Top');
+    expect(await readFile(join(dest, 'sub', 'extra.md'), 'utf-8')).toBe('# Sub');
   });
 });
 
 // ---------------------------------------------------------------------------
-// reconcileSymlinks (integration)
+// reconcileFeatures (integration)
 // ---------------------------------------------------------------------------
 
-describe('reconcileSymlinks', () => {
+describe('reconcileFeatures', () => {
   let tmpDir: string;
   let sourceRoot: string;
   let repoRoot: string;
@@ -271,7 +183,7 @@ describe('reconcileSymlinks', () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it('creates symlinks for new features', async () => {
+  it('creates feature folders for new features', async () => {
     const config: BridgeConfig = {
       domains: ['shared'],
       tools: [{ name: 'vscode', folder: '.github' }],
@@ -296,17 +208,24 @@ describe('reconcileSymlinks', () => {
       },
     ];
 
-    const result = await reconcileSymlinks(repoRoot, config, features);
+    const result = await reconcileFeatures(repoRoot, config, features);
     expect(result.added).toBe(2);
     expect(result.removed).toBe(0);
 
-    // Verify symlinks
-    const link = join(repoRoot, '.github', 'skills', 'foundation', 'SKILL.md');
-    const stats = await lstat(link);
-    expect(stats.isSymbolicLink()).toBe(true);
+    // Verify files were copied
+    const content = await readFile(
+      join(repoRoot, '.github', 'skills', 'foundation', 'SKILL.md'),
+      'utf-8'
+    );
+    expect(content).toBe('# Foundation');
+
+    // Verify marker exists
+    expect(
+      await hasMarker(join(repoRoot, '.github', 'skills', 'foundation'))
+    ).toBe(true);
   });
 
-  it('removes orphaned symlinks', async () => {
+  it('removes orphaned feature folders', async () => {
     const config: BridgeConfig = {
       domains: ['shared'],
       tools: [{ name: 'vscode', folder: '.github' }],
@@ -332,7 +251,7 @@ describe('reconcileSymlinks', () => {
         absolutePath: join(sourceRoot, 'shared', 'skills', 'deploy'),
       },
     ];
-    await reconcileSymlinks(repoRoot, config, allFeatures);
+    await reconcileFeatures(repoRoot, config, allFeatures);
 
     // Second reconcile with only one feature → deploy should be removed
     const fewerFeatures: Feature[] = [
@@ -345,16 +264,20 @@ describe('reconcileSymlinks', () => {
         absolutePath: join(sourceRoot, 'shared', 'skills', 'foundation'),
       },
     ];
-    const result = await reconcileSymlinks(repoRoot, config, fewerFeatures);
+    const result = await reconcileFeatures(repoRoot, config, fewerFeatures);
     expect(result.removed).toBe(1);
 
-    // deploy link should be gone
-    await expect(
-      lstat(join(repoRoot, '.github', 'skills', 'deploy'))
-    ).rejects.toThrow();
+    // deploy folder should be gone
+    let deployExists = true;
+    try {
+      await access(join(repoRoot, '.github', 'skills', 'deploy'));
+    } catch {
+      deployExists = false;
+    }
+    expect(deployExists).toBe(false);
   });
 
-  it('only creates symlinks for matching tools', async () => {
+  it('only creates features for matching tools', async () => {
     const config: BridgeConfig = {
       domains: ['shared'],
       tools: [
@@ -398,16 +321,17 @@ describe('reconcileSymlinks', () => {
       },
     ];
 
-    const result = await reconcileSymlinks(repoRoot, config, features);
+    const result = await reconcileFeatures(repoRoot, config, features);
     // foundation → 2 tools, my-rule → cursor only = 3 total
     expect(result.added).toBe(3);
 
     // my-rule should exist in .cursor but not .github
-    const cursorLink = join(repoRoot, '.cursor', 'instructions', 'my-rule', 'instructions.md');
-    expect((await lstat(cursorLink)).isSymbolicLink()).toBe(true);
+    const cursorRule = join(repoRoot, '.cursor', 'instructions', 'my-rule', 'instructions.md');
+    const content = await readFile(cursorRule, 'utf-8');
+    expect(content).toBe('# Rule');
   });
 
-  it('is idempotent (no changes on second run)', async () => {
+  it('is idempotent (re-sync updates all features)', async () => {
     const config: BridgeConfig = {
       domains: ['shared'],
       tools: [{ name: 'vscode', folder: '.github' }],
@@ -424,14 +348,14 @@ describe('reconcileSymlinks', () => {
       },
     ];
 
-    await reconcileSymlinks(repoRoot, config, features);
-    const result = await reconcileSymlinks(repoRoot, config, features);
+    await reconcileFeatures(repoRoot, config, features);
+    const result = await reconcileFeatures(repoRoot, config, features);
     expect(result.added).toBe(0);
-    expect(result.updated).toBe(0);
+    expect(result.updated).toBe(1);
     expect(result.removed).toBe(0);
   });
 
-  it('removes orphaned symlinks from feature types no longer in sources', async () => {
+  it('removes orphaned feature folders from feature types no longer in sources', async () => {
     const config: BridgeConfig = {
       domains: ['shared'],
       tools: [{ name: 'vscode', folder: '.github' }],
@@ -467,11 +391,12 @@ describe('reconcileSymlinks', () => {
         absolutePath: join(sourceRoot, 'shared', 'agents', 'helper'),
       },
     ];
-    await reconcileSymlinks(repoRoot, config, allFeatures);
+    await reconcileFeatures(repoRoot, config, allFeatures);
 
-    // Verify agent symlink was created
-    const agentLink = join(repoRoot, '.github', 'agents', 'helper', 'AGENT.md');
-    expect((await lstat(agentLink)).isSymbolicLink()).toBe(true);
+    // Verify agent folder was created
+    expect(
+      await hasMarker(join(repoRoot, '.github', 'agents', 'helper'))
+    ).toBe(true);
 
     // Second reconcile with only skills (agents entirely removed)
     const fewerFeatures: Feature[] = [
@@ -484,14 +409,20 @@ describe('reconcileSymlinks', () => {
         absolutePath: join(sourceRoot, 'shared', 'skills', 'foundation'),
       },
     ];
-    const result = await reconcileSymlinks(repoRoot, config, fewerFeatures);
+    const result = await reconcileFeatures(repoRoot, config, fewerFeatures);
     expect(result.removed).toBe(1);
 
-    // agent symlink and its empty parent dir should be gone
-    await expect(lstat(agentLink)).rejects.toThrow();
+    // agent folder and its empty parent dir should be gone
+    let agentExists = true;
+    try {
+      await access(join(repoRoot, '.github', 'agents', 'helper'));
+    } catch {
+      agentExists = false;
+    }
+    expect(agentExists).toBe(false);
   });
 
-  it('cleans up empty parent directories after removing symlinks', async () => {
+  it('cleans up empty parent directories after removing features', async () => {
     const config: BridgeConfig = {
       domains: ['shared'],
       tools: [{ name: 'vscode', folder: '.github' }],
@@ -519,14 +450,14 @@ describe('reconcileSymlinks', () => {
         absolutePath: join(sourceRoot, 'shared', 'agents', 'helper'),
       },
     ];
-    await reconcileSymlinks(repoRoot, config, features);
+    await reconcileFeatures(repoRoot, config, features);
 
     // Verify the dir exists
     const agentsDir = join(repoRoot, '.github', 'agents');
     expect((await lstat(agentsDir)).isDirectory()).toBe(true);
 
-    // Reconcile with empty features → removes helper symlink
-    const result = await reconcileSymlinks(repoRoot, config, []);
+    // Reconcile with empty features → removes helper feature
+    const result = await reconcileFeatures(repoRoot, config, []);
     expect(result.removed).toBe(1);
 
     // The agents/ directory should be cleaned up (empty)

@@ -5,11 +5,12 @@ import {
   mkdir,
   writeFile,
   lstat,
-  readlink,
+  readFile,
+  access,
 } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join, relative, dirname } from 'node:path';
+import { join } from 'node:path';
 import {
   saveConfig,
   loadConfig,
@@ -19,7 +20,8 @@ import {
 } from '../lib/config.js';
 import { syncAllSources } from '../lib/sources.js';
 import { discoverFeatureTypes, scanFeatures, detectDuplicates } from '../lib/manifest.js';
-import { reconcileSymlinks } from '../lib/symlinks.js';
+import { reconcileFeatures } from '../lib/symlinks.js';
+import { hasMarker } from '../lib/fs.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -137,18 +139,27 @@ describe('end-to-end integration', () => {
     const dups = detectDuplicates(features);
     expect(dups).toHaveLength(0);
 
-    // --- Step 4: Reconcile symlinks ---
-    const result = await reconcileSymlinks(repoRoot, config, features);
+    // --- Step 4: Reconcile features ---
+    const result = await reconcileFeatures(repoRoot, config, features);
     expect(result.added).toBeGreaterThan(0);
 
-    // Verify symlinks exist
-    const foundationLinkVscode = join(repoRoot, '.github', 'skills', 'foundation', 'SKILL.md');
-    const stats = await lstat(foundationLinkVscode);
-    expect(stats.isSymbolicLink()).toBe(true);
+    // Verify files were copied (not symlinks)
+    const foundationFileVscode = join(repoRoot, '.github', 'skills', 'foundation', 'SKILL.md');
+    const stats = await lstat(foundationFileVscode);
+    expect(stats.isFile()).toBe(true);
+    expect(stats.isSymbolicLink()).toBe(false);
+
+    // Verify content was copied correctly
+    const content = await readFile(foundationFileVscode, 'utf-8');
+    expect(content).toBe('# Foundation Skill');
+
+    // Verify marker exists
+    expect(await hasMarker(join(repoRoot, '.github', 'skills', 'foundation'))).toBe(true);
 
     // Verify cursor-specific feature only in .cursor
-    const cursorRuleLink = join(repoRoot, '.cursor', 'instructions', 'my-rule', 'RULE.md');
-    expect((await lstat(cursorRuleLink)).isSymbolicLink()).toBe(true);
+    const cursorRuleFile = join(repoRoot, '.cursor', 'instructions', 'my-rule', 'RULE.md');
+    const cursorContent = await readFile(cursorRuleFile, 'utf-8');
+    expect(cursorContent).toBe('# Cursor Rule');
 
     // cursor--instructions should NOT appear in .github
     let vscodeInstructionsExists = false;
@@ -158,20 +169,22 @@ describe('end-to-end integration', () => {
     } catch {}
     expect(vscodeInstructionsExists).toBe(false);
 
-    // Verify local source features are symlinked too
-    const localSkillLink = join(repoRoot, '.github', 'skills', 'local-skill', 'SKILL.md');
-    expect((await lstat(localSkillLink)).isSymbolicLink()).toBe(true);
+    // Verify local source features are copied too
+    const localSkillFile = join(repoRoot, '.github', 'skills', 'local-skill', 'SKILL.md');
+    const localContent = await readFile(localSkillFile, 'utf-8');
+    expect(localContent).toBe('# Local Skill');
 
-    // Verify local source symlink points to the actual local path (not a copy)
-    const localSkillTarget = await readlink(localSkillLink);
-    const expectedRel = relative(dirname(localSkillLink), join(localPath, 'shared', 'skills', 'local-skill', 'SKILL.md'));
-    expect(localSkillTarget).toBe(expectedRel);
+    // Verify it's a real file, not a symlink
+    const localStats = await lstat(localSkillFile);
+    expect(localStats.isFile()).toBe(true);
+    expect(localStats.isSymbolicLink()).toBe(false);
 
-    // --- Step 5: Re-sync is idempotent ---
-    const result2 = await reconcileSymlinks(repoRoot, config, features);
+    // --- Step 5: Re-sync updates existing features ---
+    const result2 = await reconcileFeatures(repoRoot, config, features);
     expect(result2.added).toBe(0);
-    expect(result2.updated).toBe(0);
     expect(result2.removed).toBe(0);
+    // updated > 0 because file-copy always re-copies
+    expect(result2.updated).toBeGreaterThan(0);
 
     // --- Step 6: Update sources ---
     const updateResults = await syncAllSources(repoRoot, config);

@@ -5,11 +5,12 @@ import { join } from 'node:path';
 import {
   featureDestPath,
   checkPathConflict,
+  syncFolderFeature,
   syncFeature,
   removeEmptyParents,
   reconcileFeatures,
 } from '../lib/symlinks.js';
-import { hasMarker, MARKER_FILENAME } from '../lib/fs.js';
+import { readManifest, MARKER_FILENAME } from '../lib/fs.js';
 import type { BridgeConfig } from '../lib/config.js';
 import type { Feature } from '../lib/manifest.js';
 
@@ -25,6 +26,7 @@ function featureStub(overrides: Partial<Feature> = {}): Feature {
     source: 'hub',
     domain: 'shared',
     absolutePath: '/tmp/hub/shared/skills/my-feature',
+    isFile: false,
     ...overrides,
   };
 }
@@ -56,28 +58,28 @@ describe('checkPathConflict', () => {
   });
 
   it('returns false for non-existent path', async () => {
-    expect(await checkPathConflict(join(tmpDir, 'nope'))).toBe(false);
+    expect(await checkPathConflict(tmpDir, 'nope', false)).toBe(false);
   });
 
-  it('returns true for a real directory without marker', async () => {
+  it('returns true for a real directory without manifest entry', async () => {
     const d = join(tmpDir, 'real-dir');
     await mkdir(d);
-    expect(await checkPathConflict(d)).toBe(true);
+    expect(await checkPathConflict(tmpDir, 'real-dir', false)).toBe(true);
   });
 
-  it('returns false for a directory with .agentbridge marker', async () => {
+  it('returns false for a directory tracked in manifest', async () => {
     const d = join(tmpDir, 'managed-dir');
     await mkdir(d);
-    await writeFile(join(d, MARKER_FILENAME), '', 'utf-8');
-    expect(await checkPathConflict(d)).toBe(false);
+    await writeFile(join(tmpDir, MARKER_FILENAME), 'managed-dir/\n', 'utf-8');
+    expect(await checkPathConflict(tmpDir, 'managed-dir', false)).toBe(false);
   });
 });
 
 // ---------------------------------------------------------------------------
-// syncFeature
+// syncFolderFeature
 // ---------------------------------------------------------------------------
 
-describe('syncFeature', () => {
+describe('syncFolderFeature', () => {
   let tmpDir: string;
 
   beforeEach(async () => {
@@ -88,24 +90,25 @@ describe('syncFeature', () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it('copies files and creates marker for a new feature', async () => {
+  it('copies files and adds to manifest for a new feature', async () => {
     const source = join(tmpDir, 'source-feature');
     await mkdir(source, { recursive: true });
     await writeFile(join(source, 'SKILL.md'), '# My Skill', 'utf-8');
 
-    const dest = join(tmpDir, '.github', 'skills', 'my-skill');
-    const result = await syncFeature(source, dest);
+    const featureTypeDir = join(tmpDir, '.github', 'skills');
+    const result = await syncFolderFeature(source, featureTypeDir, 'my-skill');
     expect(result).toBe('created');
 
     // File was copied
-    const content = await readFile(join(dest, 'SKILL.md'), 'utf-8');
+    const content = await readFile(join(featureTypeDir, 'my-skill', 'SKILL.md'), 'utf-8');
     expect(content).toBe('# My Skill');
 
-    // Marker exists
-    expect(await hasMarker(dest)).toBe(true);
+    // Manifest tracks the folder
+    const manifest = await readManifest(featureTypeDir);
+    expect(manifest).toContain('my-skill/');
 
     // It's a real file, not a symlink
-    const stats = await lstat(join(dest, 'SKILL.md'));
+    const stats = await lstat(join(featureTypeDir, 'my-skill', 'SKILL.md'));
     expect(stats.isFile()).toBe(true);
     expect(stats.isSymbolicLink()).toBe(false);
   });
@@ -115,21 +118,22 @@ describe('syncFeature', () => {
     await mkdir(source, { recursive: true });
     await writeFile(join(source, 'SKILL.md'), '# V1', 'utf-8');
 
-    const dest = join(tmpDir, '.github', 'skills', 'my-skill');
-    await syncFeature(source, dest);
+    const featureTypeDir = join(tmpDir, '.github', 'skills');
+    await syncFolderFeature(source, featureTypeDir, 'my-skill');
 
     // Update source
     await writeFile(join(source, 'SKILL.md'), '# V2', 'utf-8');
 
-    const result = await syncFeature(source, dest);
+    const result = await syncFolderFeature(source, featureTypeDir, 'my-skill');
     expect(result).toBe('updated');
 
     // New content is in place
-    const content = await readFile(join(dest, 'SKILL.md'), 'utf-8');
+    const content = await readFile(join(featureTypeDir, 'my-skill', 'SKILL.md'), 'utf-8');
     expect(content).toBe('# V2');
 
-    // Marker still present
-    expect(await hasMarker(dest)).toBe(true);
+    // Manifest still tracks the folder
+    const manifest = await readManifest(featureTypeDir);
+    expect(manifest).toContain('my-skill/');
   });
 
   it('copies nested directory structure', async () => {
@@ -138,11 +142,11 @@ describe('syncFeature', () => {
     await writeFile(join(source, 'SKILL.md'), '# Top', 'utf-8');
     await writeFile(join(source, 'sub', 'extra.md'), '# Sub', 'utf-8');
 
-    const dest = join(tmpDir, '.github', 'skills', 'my-skill');
-    await syncFeature(source, dest);
+    const featureTypeDir = join(tmpDir, '.github', 'skills');
+    await syncFolderFeature(source, featureTypeDir, 'my-skill');
 
-    expect(await readFile(join(dest, 'SKILL.md'), 'utf-8')).toBe('# Top');
-    expect(await readFile(join(dest, 'sub', 'extra.md'), 'utf-8')).toBe('# Sub');
+    expect(await readFile(join(featureTypeDir, 'my-skill', 'SKILL.md'), 'utf-8')).toBe('# Top');
+    expect(await readFile(join(featureTypeDir, 'my-skill', 'sub', 'extra.md'), 'utf-8')).toBe('# Sub');
   });
 });
 
@@ -197,6 +201,7 @@ describe('reconcileFeatures', () => {
         source: 'hub',
         domain: 'shared',
         absolutePath: join(sourceRoot, 'shared', 'skills', 'foundation'),
+        isFile: false,
       },
       {
         name: 'deploy',
@@ -205,6 +210,7 @@ describe('reconcileFeatures', () => {
         source: 'hub',
         domain: 'shared',
         absolutePath: join(sourceRoot, 'shared', 'skills', 'deploy'),
+        isFile: false,
       },
     ];
 
@@ -219,10 +225,9 @@ describe('reconcileFeatures', () => {
     );
     expect(content).toBe('# Foundation');
 
-    // Verify marker exists
-    expect(
-      await hasMarker(join(repoRoot, '.github', 'skills', 'foundation'))
-    ).toBe(true);
+    // Verify manifest tracks the folder
+    const manifest = await readManifest(join(repoRoot, '.github', 'skills'));
+    expect(manifest).toContain('foundation/');
   });
 
   it('removes orphaned feature folders', async () => {
@@ -241,6 +246,7 @@ describe('reconcileFeatures', () => {
         source: 'hub',
         domain: 'shared',
         absolutePath: join(sourceRoot, 'shared', 'skills', 'foundation'),
+        isFile: false,
       },
       {
         name: 'deploy',
@@ -249,6 +255,7 @@ describe('reconcileFeatures', () => {
         source: 'hub',
         domain: 'shared',
         absolutePath: join(sourceRoot, 'shared', 'skills', 'deploy'),
+        isFile: false,
       },
     ];
     await reconcileFeatures(repoRoot, config, allFeatures);
@@ -262,6 +269,7 @@ describe('reconcileFeatures', () => {
         source: 'hub',
         domain: 'shared',
         absolutePath: join(sourceRoot, 'shared', 'skills', 'foundation'),
+        isFile: false,
       },
     ];
     const result = await reconcileFeatures(repoRoot, config, fewerFeatures);
@@ -304,6 +312,7 @@ describe('reconcileFeatures', () => {
         source: 'hub',
         domain: 'shared',
         absolutePath: join(sourceRoot, 'shared', 'skills', 'foundation'),
+        isFile: false,
       },
       {
         name: 'my-rule',
@@ -318,6 +327,7 @@ describe('reconcileFeatures', () => {
           'my-rule'
         ),
         toolPrefix: 'cursor',
+        isFile: false,
       },
     ];
 
@@ -345,6 +355,7 @@ describe('reconcileFeatures', () => {
         source: 'hub',
         domain: 'shared',
         absolutePath: join(sourceRoot, 'shared', 'skills', 'foundation'),
+        isFile: false,
       },
     ];
 
@@ -381,6 +392,7 @@ describe('reconcileFeatures', () => {
         source: 'hub',
         domain: 'shared',
         absolutePath: join(sourceRoot, 'shared', 'skills', 'foundation'),
+        isFile: false,
       },
       {
         name: 'helper',
@@ -389,14 +401,14 @@ describe('reconcileFeatures', () => {
         source: 'hub',
         domain: 'shared',
         absolutePath: join(sourceRoot, 'shared', 'agents', 'helper'),
+        isFile: false,
       },
     ];
     await reconcileFeatures(repoRoot, config, allFeatures);
 
-    // Verify agent folder was created
-    expect(
-      await hasMarker(join(repoRoot, '.github', 'agents', 'helper'))
-    ).toBe(true);
+    // Verify agent folder was created and tracked in manifest
+    const agentsManifest = await readManifest(join(repoRoot, '.github', 'agents'));
+    expect(agentsManifest).toContain('helper/');
 
     // Second reconcile with only skills (agents entirely removed)
     const fewerFeatures: Feature[] = [
@@ -407,6 +419,7 @@ describe('reconcileFeatures', () => {
         source: 'hub',
         domain: 'shared',
         absolutePath: join(sourceRoot, 'shared', 'skills', 'foundation'),
+        isFile: false,
       },
     ];
     const result = await reconcileFeatures(repoRoot, config, fewerFeatures);
@@ -448,6 +461,7 @@ describe('reconcileFeatures', () => {
         source: 'hub',
         domain: 'shared',
         absolutePath: join(sourceRoot, 'shared', 'agents', 'helper'),
+        isFile: false,
       },
     ];
     await reconcileFeatures(repoRoot, config, features);

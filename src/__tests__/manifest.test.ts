@@ -55,6 +55,7 @@ function featureStub(overrides: Partial<Feature> = {}): Feature {
     source: 'hub',
     domain: 'shared',
     absolutePath: '/tmp/hub/shared/skills/my-feature',
+    isFile: false,
     ...overrides,
   };
 }
@@ -309,7 +310,7 @@ describe('scanFeatures', () => {
     expect(features.map((f) => f.source).sort()).toEqual(['extra', 'hub']);
   });
 
-  it('skips non-directory entries', async () => {
+  it('includes both file and folder entries', async () => {
     await buildSourceTree(sourceRoot, {
       'shared/skills/foundation': ['SKILL.md'],
     });
@@ -327,8 +328,16 @@ describe('scanFeatures', () => {
     };
 
     const features = await scanFeatures(tmpDir, config, ['skills']);
-    expect(features).toHaveLength(1);
-    expect(features[0].name).toBe('foundation');
+    expect(features).toHaveLength(2);
+    
+    const folder = features.find(f => f.name === 'foundation');
+    const file = features.find(f => f.name === 'README.md');
+    
+    expect(folder).toBeDefined();
+    expect(folder!.isFile).toBe(false);
+    
+    expect(file).toBeDefined();
+    expect(file!.isFile).toBe(true);
   });
 });
 

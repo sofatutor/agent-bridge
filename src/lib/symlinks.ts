@@ -1,7 +1,20 @@
-import { readdir, mkdir, rmdir } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { readdir, mkdir, rmdir, copyFile } from 'node:fs/promises';
+import { join, dirname, basename } from 'node:path';
 import type { BridgeConfig } from './config.js';
-import { dirExists, copyDirContents, writeMarker, hasMarker, removeDir, MARKER_FILENAME } from './fs.js';
+import {
+  dirExists,
+  fileExists,
+  copyDirContents,
+  removeDir,
+  removeFile,
+  readManifest,
+  writeManifest,
+  addToManifest,
+  removeFromManifest,
+  isManifestFolder,
+  manifestEntryName,
+  MARKER_FILENAME,
+} from './fs.js';
 import {
   type Feature,
   featureMatchesTool,
@@ -9,11 +22,13 @@ import {
 } from './manifest.js';
 
 // ---------------------------------------------------------------------------
-// Feature folder path helpers
+// Feature path helpers
 // ---------------------------------------------------------------------------
 
 /**
  * Compute the destination path for a feature inside a tool's folder.
+ * For folder-based features: returns the folder path.
+ * For file-based features: returns the file path.
  */
 export function featureDestPath(
   repoRoot: string,
@@ -29,15 +44,43 @@ export function featureDestPath(
 // ---------------------------------------------------------------------------
 
 /**
- * Check whether a feature destination conflicts with existing user content.
- *
- * Returns `true` (conflict) when the path exists as a directory that does NOT
- * contain the `.agentbridge` marker — meaning it was not created by us.
- * A non-existent path or a previously-synced folder (has marker) is safe.
+ * Check whether a folder-based feature destination conflicts with existing user content.
+ * Returns `true` when the folder exists and is not tracked in the manifest.
  */
-export async function checkPathConflict(destPath: string): Promise<boolean> {
+export async function checkFolderConflict(featureTypeDir: string, folderName: string): Promise<boolean> {
+  const destPath = join(featureTypeDir, folderName);
   if (!(await dirExists(destPath))) return false;
-  return !(await hasMarker(destPath));
+  
+  const manifest = await readManifest(featureTypeDir);
+  return !manifest.includes(folderName + '/');
+}
+
+/**
+ * Check whether a file-based feature destination conflicts with existing user content.
+ * Returns `true` when the file exists and is not tracked in the manifest.
+ */
+export async function checkFileConflict(featureTypeDir: string, fileName: string): Promise<boolean> {
+  const filePath = join(featureTypeDir, fileName);
+  if (!(await fileExists(filePath))) return false;
+  
+  const manifest = await readManifest(featureTypeDir);
+  return !manifest.includes(fileName);
+}
+
+/**
+ * Check whether a feature destination conflicts with existing user content.
+ * Handles both folder-based and file-based features.
+ */
+export async function checkPathConflict(
+  featureTypeDir: string,
+  featureName: string,
+  isFile: boolean
+): Promise<boolean> {
+  if (isFile) {
+    return checkFileConflict(featureTypeDir, featureName);
+  } else {
+    return checkFolderConflict(featureTypeDir, featureName);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -45,25 +88,56 @@ export async function checkPathConflict(destPath: string): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 /**
- * Sync a single feature: clear destination, copy files, write marker.
- * Returns whether the feature was freshly added or updated.
+ * Sync a folder-based feature: clear destination, copy files, add to manifest.
  */
-export async function syncFeature(
+export async function syncFolderFeature(
   sourcePath: string,
-  destPath: string
+  featureTypeDir: string,
+  folderName: string
 ): Promise<'created' | 'updated'> {
+  const destPath = join(featureTypeDir, folderName);
   const existed = await dirExists(destPath);
 
-  // If the folder already exists (from a previous sync), remove its contents.
   if (existed) {
     await removeDir(destPath);
   }
 
   await mkdir(destPath, { recursive: true });
   await copyDirContents(sourcePath, destPath);
-  await writeMarker(destPath);
+  await addToManifest(featureTypeDir, folderName + '/');
 
   return existed ? 'updated' : 'created';
+}
+
+/**
+ * Sync a file-based feature: copy file, add to manifest.
+ */
+export async function syncFileFeature(
+  sourcePath: string,
+  featureTypeDir: string,
+  fileName: string
+): Promise<'created' | 'updated'> {
+  const destPath = join(featureTypeDir, fileName);
+  const existed = await fileExists(destPath);
+
+  await mkdir(featureTypeDir, { recursive: true });
+  await copyFile(sourcePath, destPath);
+  await addToManifest(featureTypeDir, fileName);
+
+  return existed ? 'updated' : 'created';
+}
+
+/**
+ * Sync a feature (folder or file based).
+ * @deprecated Use syncFolderFeature or syncFileFeature directly
+ */
+export async function syncFeature(
+  sourcePath: string,
+  destPath: string
+): Promise<'created' | 'updated'> {
+  const featureTypeDir = dirname(destPath);
+  const folderName = basename(destPath);
+  return syncFolderFeature(sourcePath, featureTypeDir, folderName);
 }
 
 // ---------------------------------------------------------------------------
@@ -88,26 +162,53 @@ export async function removeEmptyParents(
 }
 
 // ---------------------------------------------------------------------------
-// Collect all managed feature folders (those with .agentbridge marker)
+// Collect all managed entries from manifests
 // ---------------------------------------------------------------------------
 
-async function collectManagedFeatureDirs(dir: string): Promise<string[]> {
+interface ManagedEntry {
+  /** Full path to the file or folder */
+  path: string;
+  /** Directory containing the manifest (feature-type dir) */
+  manifestDir: string;
+  /** Entry as it appears in manifest (with trailing / for folders) */
+  manifestEntry: string;
+  /** True if folder, false if file */
+  isFolder: boolean;
+}
+
+/**
+ * Recursively collect all managed entries (files and folders) from manifests.
+ * Scans for .agentbridge files and reads their contents.
+ */
+async function collectManagedEntries(dir: string): Promise<ManagedEntry[]> {
   if (!(await dirExists(dir))) return [];
 
-  const result: string[] = [];
+  const result: ManagedEntry[] = [];
   const entries = await readdir(dir, { withFileTypes: true });
+
+  // Check if this directory has a manifest
+  const manifestEntries = await readManifest(dir);
+  for (const entry of manifestEntries) {
+    const isFolder = isManifestFolder(entry);
+    const name = manifestEntryName(entry);
+    result.push({
+      path: join(dir, name),
+      manifestDir: dir,
+      manifestEntry: entry,
+      isFolder,
+    });
+  }
+
+  // Recurse into subdirectories (to find manifests in nested feature-type dirs)
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
+    if (entry.name === MARKER_FILENAME) continue;
+    
     const fullPath = join(dir, entry.name);
-    // Check if this directory itself is a managed feature folder
-    if (await hasMarker(fullPath)) {
-      result.push(fullPath);
-    } else {
-      // Recurse deeper (e.g. .github/skills/ → check children)
-      const sub = await collectManagedFeatureDirs(fullPath);
-      result.push(...sub);
-    }
+    const sub = await collectManagedEntries(fullPath);
+    result.push(...sub);
   }
+
   return result;
 }
 
@@ -121,6 +222,14 @@ export interface ReconcileResult {
   removed: number;
 }
 
+interface ExpectedFeature {
+  sourcePath: string;
+  featureTypeDir: string;
+  name: string;
+  manifestEntry: string;
+  isFile: boolean;
+}
+
 export async function reconcileFeatures(
   repoRoot: string,
   config: BridgeConfig,
@@ -130,39 +239,71 @@ export async function reconcileFeatures(
   let updated = 0;
   let removed = 0;
 
-  // Phase 1: Compute all expected feature destinations
-  const expectedDests = new Map<string, { sourcePath: string }>();
+  // Phase 1: Compute all expected features
+  // Key = full destination path
+  const expectedFeatures = new Map<string, ExpectedFeature>();
 
   for (const tool of config.tools) {
     for (const feature of features) {
       if (!featureMatchesTool(feature, tool.name)) continue;
 
-      const linkName = featureName(feature);
-      const dest = featureDestPath(
-        repoRoot,
-        tool.folder,
-        feature.displayType,
-        linkName
-      );
-      expectedDests.set(dest, { sourcePath: feature.absolutePath });
+      const name = featureName(feature);
+      const featureTypeDir = join(repoRoot, tool.folder, feature.displayType);
+      const destPath = join(featureTypeDir, name);
+      const manifestEntry = feature.isFile ? name : name + '/';
+
+      expectedFeatures.set(destPath, {
+        sourcePath: feature.absolutePath,
+        featureTypeDir,
+        name,
+        manifestEntry,
+        isFile: feature.isFile,
+      });
     }
   }
 
-  // Phase 2: Remove orphaned managed folders (previously synced but no longer expected)
+  // Phase 2: Remove orphaned managed entries (previously synced but no longer expected)
   for (const tool of config.tools) {
     const toolDir = join(repoRoot, tool.folder);
-    const managedDirs = await collectManagedFeatureDirs(toolDir);
-    for (const dir of managedDirs) {
-      if (expectedDests.has(dir)) continue;
-      await removeDir(dir);
-      await removeEmptyParents(dirname(dir), toolDir);
+    const managedEntries = await collectManagedEntries(toolDir);
+    
+    for (const entry of managedEntries) {
+      if (expectedFeatures.has(entry.path)) continue;
+      
+      // Remove the file or folder
+      if (entry.isFolder) {
+        await removeDir(entry.path);
+      } else {
+        await removeFile(entry.path);
+      }
+      
+      // Remove from manifest
+      await removeFromManifest(entry.manifestDir, entry.manifestEntry);
+      
+      // Clean up empty parent directories
+      await removeEmptyParents(entry.manifestDir, toolDir);
       removed++;
     }
   }
 
-  // Phase 3: Create / update feature folders
-  for (const [dest, { sourcePath }] of expectedDests) {
-    const result = await syncFeature(sourcePath, dest);
+  // Phase 3: Create / update features
+  for (const [destPath, expected] of expectedFeatures) {
+    let result: 'created' | 'updated';
+    
+    if (expected.isFile) {
+      result = await syncFileFeature(
+        expected.sourcePath,
+        expected.featureTypeDir,
+        expected.name
+      );
+    } else {
+      result = await syncFolderFeature(
+        expected.sourcePath,
+        expected.featureTypeDir,
+        expected.name
+      );
+    }
+    
     if (result === 'created') added++;
     else if (result === 'updated') updated++;
   }

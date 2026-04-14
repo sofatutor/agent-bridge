@@ -14,6 +14,7 @@ import {
   reconcileFeatures,
 } from '../lib/symlinks.js';
 import { syncAllSources, removeStaleSourceDirs } from '../lib/sources.js';
+import { join } from 'node:path';
 
 export async function syncCommand(cwd?: string): Promise<void> {
   const repoRoot = cwd ?? findRepoRoot();
@@ -86,13 +87,14 @@ export async function syncCommand(cwd?: string): Promise<void> {
       if (!featureMatchesTool(feature, tool.name)) continue;
 
       const linkName = featureName(feature);
+      const featureTypeDir = join(repoRoot, tool.folder, feature.displayType);
       const dest = featureDestPath(
         repoRoot,
         tool.folder,
         feature.displayType,
         linkName
       );
-      if (await checkPathConflict(dest)) {
+      if (await checkPathConflict(featureTypeDir, linkName, feature.isFile)) {
         conflicts.push(dest);
       }
     }

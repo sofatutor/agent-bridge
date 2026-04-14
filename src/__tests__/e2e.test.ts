@@ -21,7 +21,7 @@ import {
 import { syncAllSources } from '../lib/sources.js';
 import { discoverFeatureTypes, scanFeatures, detectDuplicates } from '../lib/manifest.js';
 import { reconcileFeatures } from '../lib/symlinks.js';
-import { hasMarker } from '../lib/fs.js';
+import { readManifest } from '../lib/fs.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -153,8 +153,9 @@ describe('end-to-end integration', () => {
     const content = await readFile(foundationFileVscode, 'utf-8');
     expect(content).toBe('# Foundation Skill');
 
-    // Verify marker exists
-    expect(await hasMarker(join(repoRoot, '.github', 'skills', 'foundation'))).toBe(true);
+    // Verify manifest tracks the feature
+    const skillsManifest = await readManifest(join(repoRoot, '.github', 'skills'));
+    expect(skillsManifest).toContain('foundation/');
 
     // Verify cursor-specific feature only in .cursor
     const cursorRuleFile = join(repoRoot, '.cursor', 'instructions', 'my-rule', 'RULE.md');

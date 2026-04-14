@@ -18,10 +18,12 @@ export interface Feature {
   displayType: string;
   source: string;
   domain: string;
-  /** Absolute path to the feature directory */
+  /** Absolute path to the feature (directory or file) */
   absolutePath: string;
   /** Tool prefix if present (e.g. "cursor" from "cursor--instructions") */
   toolPrefix?: string;
+  /** True if feature is a single file, false if a directory */
+  isFile: boolean;
 }
 
 export interface DuplicateConflict {
@@ -101,7 +103,8 @@ export async function discoverFeatureTypes(
 /**
  * Scan all features across sources × domains × feature types.
  *
- * Structure: `<source-path>/<domain>/<feature-type>/<feature>/`
+ * Structure: `<source-path>/<domain>/<feature-type>/<feature>/` (folder-based)
+ *         or `<source-path>/<domain>/<feature-type>/<feature.ext>` (file-based)
  */
 export async function scanFeatures(
   repoRoot: string,
@@ -123,7 +126,9 @@ export async function scanFeatures(
 
         const entries = await readdir(ftDir, { withFileTypes: true });
         for (const entry of entries) {
-          if (!entry.isDirectory()) continue;
+          const isFile = entry.isFile();
+          const isDir = entry.isDirectory();
+          if (!isFile && !isDir) continue;
 
           const { toolPrefix: itemToolPrefix } = parseToolPrefix(entry.name);
           const toolPrefix = itemToolPrefix ?? typeToolPrefix;
@@ -136,6 +141,7 @@ export async function scanFeatures(
             domain,
             absolutePath: join(ftDir, entry.name),
             toolPrefix,
+            isFile,
           });
         }
       }

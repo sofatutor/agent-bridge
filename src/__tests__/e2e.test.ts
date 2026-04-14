@@ -20,7 +20,7 @@ import {
 } from '../lib/config.js';
 import { syncAllSources } from '../lib/sources.js';
 import { discoverFeatureTypes, scanFeatures, detectDuplicates } from '../lib/manifest.js';
-import { reconcileFeatures } from '../lib/symlinks.js';
+import { reconcileFeatures } from '../lib/sync.js';
 import { readManifest } from '../lib/fs.js';
 
 // ---------------------------------------------------------------------------

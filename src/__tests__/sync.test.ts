@@ -9,7 +9,7 @@ import {
   syncFeature,
   removeEmptyParents,
   reconcileFeatures,
-} from '../lib/symlinks.js';
+} from '../lib/sync.js';
 import { readManifest, MARKER_FILENAME } from '../lib/fs.js';
 import type { BridgeConfig } from '../lib/config.js';
 import type { Feature } from '../lib/manifest.js';

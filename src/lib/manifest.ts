@@ -69,7 +69,8 @@ export function featureName(feature: Feature): string {
 }
 
 /** @deprecated Use featureName instead */
-export const symlinkName = featureName;
+/** @deprecated Use featureName directly */
+export const syncName = featureName;
 
 // ---------------------------------------------------------------------------
 // Discovery

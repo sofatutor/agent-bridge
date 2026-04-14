@@ -12,7 +12,7 @@ import {
   featureDestPath,
   checkPathConflict,
   reconcileFeatures,
-} from '../lib/symlinks.js';
+} from '../lib/sync.js';
 import { syncAllSources, removeStaleSourceDirs } from '../lib/sources.js';
 import { join } from 'node:path';
 

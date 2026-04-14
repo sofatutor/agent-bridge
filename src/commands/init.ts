@@ -208,5 +208,5 @@ export async function initCommand(cwd?: string): Promise<void> {
     s.stop('All sources ready');
   }
 
-  p.outro('Done! Run `agent-bridge sync` to create symlinks.');
+  p.outro('Done! Run `agent-bridge sync` to sync features.');
 }

@@ -18,7 +18,7 @@ Usage: agent-bridge <command> [options]
 
 Commands:
   init     Initialize Agent Bridge (creates .agent-bridge/config.yml)
-  sync     Fetch sources, discover features, and reconcile symlinks
+  sync     Fetch sources, discover features, and sync files
   update   Fetch latest changes for all remote sources
 
 Options:

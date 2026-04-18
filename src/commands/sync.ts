@@ -16,7 +16,7 @@ import {
 import { syncAllSources, removeStaleSourceDirs } from '../lib/sources.js';
 import { join } from 'node:path';
 
-export async function syncCommand(cwd?: string): Promise<void> {
+export async function syncCommand(cwd?: string, _opts?: unknown): Promise<void> {
   const repoRoot = cwd ?? findRepoRoot();
 
   p.intro('Agent Bridge Sync');
@@ -121,5 +121,14 @@ export async function syncCommand(cwd?: string): Promise<void> {
   p.log.info(
     `Added: ${result.added}  Updated: ${result.updated}  Removed: ${result.removed}`
   );
+
+  if (result.errors.length > 0) {
+    for (const err of result.errors) {
+      p.log.error(`${err.path}: ${err.error}`);
+    }
+    p.outro(`Sync completed with ${result.errors.length} error(s).`);
+    process.exit(1);
+  }
+
   p.outro('Sync complete.');
 }

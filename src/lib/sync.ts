@@ -220,6 +220,7 @@ export interface ReconcileResult {
   added: number;
   updated: number;
   removed: number;
+  errors: Array<{ path: string; error: string }>;
 }
 
 interface ExpectedFeature {
@@ -238,6 +239,7 @@ export async function reconcileFeatures(
   let added = 0;
   let updated = 0;
   let removed = 0;
+  const errors: Array<{ path: string; error: string }> = [];
 
   // Phase 1: Compute all expected features
   // Key = full destination path
@@ -266,47 +268,53 @@ export async function reconcileFeatures(
   for (const tool of config.tools) {
     const toolDir = join(repoRoot, tool.folder);
     const managedEntries = await collectManagedEntries(toolDir);
-    
+
     for (const entry of managedEntries) {
       if (expectedFeatures.has(entry.path)) continue;
-      
-      // Remove the file or folder
-      if (entry.isFolder) {
-        await removeDir(entry.path);
-      } else {
-        await removeFile(entry.path);
+
+      try {
+        if (entry.isFolder) {
+          await removeDir(entry.path);
+        } else {
+          await removeFile(entry.path);
+        }
+        await removeFromManifest(entry.manifestDir, entry.manifestEntry);
+        await removeEmptyParents(entry.manifestDir, toolDir);
+        removed++;
+      } catch (err) {
+        errors.push({
+          path: entry.path,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
-      
-      // Remove from manifest
-      await removeFromManifest(entry.manifestDir, entry.manifestEntry);
-      
-      // Clean up empty parent directories
-      await removeEmptyParents(entry.manifestDir, toolDir);
-      removed++;
     }
   }
 
-  // Phase 3: Create / update features
+  // Phase 3: Create / update features (isolate failures so one bad feature
+  // doesn't abort the entire sync).
   for (const [destPath, expected] of expectedFeatures) {
-    let result: 'created' | 'updated';
-    
-    if (expected.isFile) {
-      result = await syncFileFeature(
-        expected.sourcePath,
-        expected.featureTypeDir,
-        expected.name
-      );
-    } else {
-      result = await syncFolderFeature(
-        expected.sourcePath,
-        expected.featureTypeDir,
-        expected.name
-      );
+    try {
+      const result = expected.isFile
+        ? await syncFileFeature(
+            expected.sourcePath,
+            expected.featureTypeDir,
+            expected.name
+          )
+        : await syncFolderFeature(
+            expected.sourcePath,
+            expected.featureTypeDir,
+            expected.name
+          );
+
+      if (result === 'created') added++;
+      else if (result === 'updated') updated++;
+    } catch (err) {
+      errors.push({
+        path: destPath,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
-    
-    if (result === 'created') added++;
-    else if (result === 'updated') updated++;
   }
 
-  return { added, updated, removed };
+  return { added, updated, removed, errors };
 }

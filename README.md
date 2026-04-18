@@ -51,6 +51,7 @@ The interactive init flow will:
 4. Generate `.agent-bridge/config.yml`.
 5. Clone any remote sources.
 6. Create `.agent-bridge/.gitignore` (ignores cloned repos, keeps config).
+7. Optionally install git hooks to auto-sync on checkout/merge.
 
 After init, commit `.agent-bridge/config.yml` to your repo.
 
@@ -76,6 +77,44 @@ agent-bridge update
 Pulls the latest changes from all remote sources. Local sources require no update.
 
 After updating, run `agent-bridge sync` to reconcile features.
+
+## Git Hooks (Auto-Sync)
+
+When running `agent-bridge init` inside a Git repository, you'll be prompted to install git hooks that automatically keep your AI agent configurations up to date. If enabled, Agent Bridge installs:
+
+- **post-checkout** — runs after `git checkout` (switching branches)
+- **post-merge** — runs after `git merge` or `git pull`
+
+These hooks run `agent-bridge update && agent-bridge sync` in the background, so your workflow isn't blocked.
+
+### How It Works
+
+The hooks execute asynchronously with a short delay to let Git complete its operations. They:
+1. Check if `agent-bridge` is available globally
+2. Fall back to `npx @sofatutor/agent-bridge` if not
+3. Run update and sync silently in the background
+
+### Skipping Existing Hooks
+
+If you already have custom `post-checkout` or `post-merge` hooks, Agent Bridge will skip them to avoid conflicts. You can manually integrate Agent Bridge into your existing hooks by adding:
+
+```sh
+# At the end of your existing hook
+(
+  sleep 1
+  agent-bridge update && agent-bridge sync
+) >/dev/null 2>&1 &
+```
+
+### Removing Hooks
+
+Agent Bridge marks its hooks with a special comment. To remove them, delete the hook files:
+
+```bash
+rm .git/hooks/post-checkout .git/hooks/post-merge
+```
+
+Or re-run `agent-bridge init` — Agent Bridge hooks are automatically updated on re-init.
 
 ## CLI Commands
 
@@ -116,6 +155,8 @@ agent-bridge sync --cwd /path/to/my-project
 | Duplicate feature name error | Rename one of the conflicting features across sources                |
 | Local source path not found  | Verify the path in `config.yml` is correct relative to the repo root |
 | Path conflict error          | A non-managed folder exists at the destination — rename or remove it |
+| Git hooks not installed      | Run `agent-bridge init` from inside a Git repository                 |
+| Hooks skipped (existing)     | Existing non-Agent-Bridge hooks are preserved; integrate manually    |
 
 ## Development
 

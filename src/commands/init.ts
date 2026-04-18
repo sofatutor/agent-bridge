@@ -9,7 +9,7 @@ import {
   type ToolConfig,
   type SourceConfig,
 } from '../lib/config.js';
-import { findRepoRoot } from '../lib/git.js';
+import { findRepoRoot, isInGitRepo, installGitHooks } from '../lib/git.js';
 import { syncAllSources } from '../lib/sources.js';
 
 const WELL_KNOWN_TOOLS = [
@@ -206,6 +206,35 @@ export async function initCommand(cwd?: string): Promise<void> {
     }
   } else {
     s.stop('All sources ready');
+  }
+
+  // --- Git Hooks ---
+  if (isInGitRepo(repoRoot)) {
+    const installHooks = await p.confirm({
+      message: 'Install git hooks to auto-sync on checkout/merge?',
+      initialValue: false,
+    });
+
+    if (!p.isCancel(installHooks) && installHooks) {
+      const hookResult = await installGitHooks(repoRoot);
+      
+      if (hookResult.installed.length > 0) {
+        p.log.success(`Installed git hooks: ${hookResult.installed.join(', ')}`);
+      }
+      
+      if (hookResult.skipped.length > 0) {
+        p.log.warn(
+          `Skipped hooks (existing non-Agent-Bridge hooks): ${hookResult.skipped.join(', ')}`
+        );
+        p.log.info('Run with existing hooks manually or use --force to overwrite.');
+      }
+      
+      if (hookResult.errors.length > 0) {
+        for (const err of hookResult.errors) {
+          p.log.error(`Hook ${err.hook}: ${err.error}`);
+        }
+      }
+    }
   }
 
   p.outro('Done! Run `agent-bridge sync` to sync features.');

@@ -26,6 +26,12 @@ export async function listFilesRecursive(dir: string): Promise<string[]> {
   const files: string[] = [];
   const entries = await readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
+    // Skip symlinks entirely: never follow them out of the source tree,
+    // and don't attempt to replicate them (keeps the destination simple
+    // and avoids symlink-escape vulnerabilities).
+    if (entry.isSymbolicLink()) continue;
+    // Skip Agent Bridge marker files that may exist in source repos.
+    if (entry.name === MARKER_FILENAME) continue;
     if (entry.isDirectory()) {
       const subFiles = await listFilesRecursive(join(dir, entry.name));
       files.push(...subFiles.map((f) => join(entry.name, f)));

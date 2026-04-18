@@ -49,7 +49,8 @@ const HOOK_MARKER = '# agent-bridge-hook';
 
 /**
  * Generate the hook script content.
- * Runs update and sync in the background to avoid blocking git operations.
+ * Runs update and sync in the background, logging to `.agent-bridge/hook.log`
+ * (trimmed to the last ~200 lines) so failures are diagnosable.
  */
 export function generateHookScript(): string {
   return `#!/bin/sh
@@ -58,18 +59,32 @@ ${HOOK_MARKER}
 # It runs 'agent-bridge update && agent-bridge sync' in the background
 # to keep your AI agent configurations up to date.
 
-# Run in background to avoid blocking git operations
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+LOG_DIR="\${REPO_ROOT:-.}/.agent-bridge"
+LOG_FILE="\${LOG_DIR}/hook.log"
+
+mkdir -p "\$LOG_DIR" 2>/dev/null
+
 (
   # Wait a moment for git to finish
   sleep 1
-  
-  # Check if agent-bridge is available
-  if command -v agent-bridge >/dev/null 2>&1; then
-    agent-bridge update && agent-bridge sync
-  elif command -v npx >/dev/null 2>&1; then
-    npx @sofatutor/agent-bridge update && npx @sofatutor/agent-bridge sync
+
+  {
+    echo "--- $(date '+%Y-%m-%dT%H:%M:%S%z') agent-bridge hook ---"
+    if command -v agent-bridge >/dev/null 2>&1; then
+      agent-bridge update && agent-bridge sync
+    elif command -v npx >/dev/null 2>&1; then
+      npx @sofatutor/agent-bridge update && npx @sofatutor/agent-bridge sync
+    else
+      echo "agent-bridge not found (install globally or ensure npx is available)"
+    fi
+  } >>"\$LOG_FILE" 2>&1
+
+  # Keep the log from growing without bound.
+  if [ -f "\$LOG_FILE" ]; then
+    tail -n 200 "\$LOG_FILE" >"\$LOG_FILE.tmp" && mv "\$LOG_FILE.tmp" "\$LOG_FILE"
   fi
-) >/dev/null 2>&1 &
+) </dev/null >/dev/null 2>&1 &
 `;
 }
 

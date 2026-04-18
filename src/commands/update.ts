@@ -3,7 +3,7 @@ import { loadConfig } from '../lib/config.js';
 import { findRepoRoot } from '../lib/git.js';
 import { syncAllSources } from '../lib/sources.js';
 
-export async function updateCommand(cwd?: string): Promise<void> {
+export async function updateCommand(cwd?: string, _opts?: unknown): Promise<void> {
   const repoRoot = cwd ?? findRepoRoot();
 
   p.intro('Agent Bridge — Update Sources');

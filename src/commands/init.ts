@@ -23,7 +23,10 @@ const CUSTOM_TOOL_SENTINEL: ToolConfig = { name: '__custom__', folder: '__custom
 
 const DEFAULT_DOMAINS = ['backend', 'frontend', 'shared'];
 
-export async function initCommand(cwd?: string): Promise<void> {
+export async function initCommand(
+  cwd?: string,
+  opts?: { force?: boolean }
+): Promise<void> {
   const repoRoot = cwd ?? findRepoRoot();
 
   p.intro('Welcome to Agent Bridge — Project Setup');
@@ -218,7 +221,7 @@ export async function initCommand(cwd?: string): Promise<void> {
     });
 
     if (!p.isCancel(installHooks) && installHooks) {
-      const hookResult = await installGitHooks(repoRoot);
+      const hookResult = await installGitHooks(repoRoot, opts?.force === true);
       
       if (hookResult.installed.length > 0) {
         p.log.success(`Installed git hooks: ${hookResult.installed.join(', ')}`);
@@ -228,7 +231,7 @@ export async function initCommand(cwd?: string): Promise<void> {
         p.log.warn(
           `Skipped hooks (existing non-Agent-Bridge hooks): ${hookResult.skipped.join(', ')}`
         );
-        p.log.info('Run with existing hooks manually or use --force to overwrite.');
+        p.log.info('Re-run `agent-bridge init --force` to overwrite, or integrate manually.');
       }
       
       if (hookResult.errors.length > 0) {

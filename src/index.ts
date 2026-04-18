@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { initCommand } from './commands/init.js';
 import { syncCommand } from './commands/sync.js';
 import { updateCommand } from './commands/update.js';
+import { VERSION } from './lib/version.js';
 
 const COMMANDS: Record<string, (cwd?: string) => Promise<void>> = {
   init: initCommand,
@@ -23,6 +24,7 @@ Commands:
 
 Options:
   --cwd <path>  Override the working directory (defaults to git root or cwd)
+  --version     Show version number
 `;
 
 function parseCwd(): string | undefined {
@@ -35,6 +37,11 @@ function parseCwd(): string | undefined {
 
 const command = process.argv.filter((a) => !a.startsWith('--') && process.argv.indexOf(a) > 1)[0];
 const cwd = parseCwd();
+
+if (process.argv.includes('--version') || process.argv.includes('-v')) {
+  console.log(VERSION);
+  process.exit(0);
+}
 
 if (!command || command === 'help') {
   console.log(HELP_TEXT);

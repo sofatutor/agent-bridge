@@ -11,6 +11,7 @@ import {
 } from '../lib/config.js';
 import { findRepoRoot, isInGitRepo, installGitHooks } from '../lib/git.js';
 import { syncAllSources } from '../lib/sources.js';
+import { VERSION } from '../lib/version.js';
 
 const WELL_KNOWN_TOOLS = [
   { value: { name: 'vscode', folder: '.github' }, label: 'VS Code (.github/)' },
@@ -186,6 +187,7 @@ export async function initCommand(cwd?: string): Promise<void> {
   }
 
   const config: BridgeConfig = {
+    version: VERSION,
     domains,
     tools,
     sources,

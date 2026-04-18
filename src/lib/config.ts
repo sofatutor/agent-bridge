@@ -20,6 +20,7 @@ export interface SourceConfig {
 }
 
 export interface BridgeConfig {
+  version?: string;
   domains: string[];
   tools: ToolConfig[];
   sources: SourceConfig[];

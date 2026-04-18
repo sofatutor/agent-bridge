@@ -1,6 +1,40 @@
 import { readFile, writeFile, access, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, isAbsolute } from 'node:path';
 import yaml from 'js-yaml';
+
+// ---------------------------------------------------------------------------
+// Name / path safety
+// ---------------------------------------------------------------------------
+
+/**
+ * Characters allowed in identifier-like fields (tool name, source name,
+ * domain). Keep this conservative so values are always safe as directory
+ * names on any platform.
+ */
+const SAFE_NAME_RE = /^[A-Za-z0-9._-]+$/;
+
+function isSafeName(value: string): boolean {
+  return SAFE_NAME_RE.test(value) && value !== '.' && value !== '..';
+}
+
+/**
+ * Folder paths are relative, use only safe path segments, and never
+ * traverse out of the repo root.
+ */
+function isSafeRelativeFolder(value: string): boolean {
+  if (!value.trim()) return false;
+  if (isAbsolute(value)) return false;
+  if (value.includes('\0')) return false;
+  // Normalize separators for a cross-platform check.
+  const segments = value.split(/[\\/]/).filter((s) => s.length > 0);
+  if (segments.length === 0) return false;
+  for (const seg of segments) {
+    if (seg === '..' || seg === '.') return false;
+    // Allow a single leading dot (e.g. .github) but no other weird chars.
+    if (!/^\.?[A-Za-z0-9._-]+$/.test(seg)) return false;
+  }
+  return true;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -149,6 +183,11 @@ export function validateConfig(config: unknown): ConfigValidationResult {
         errors.push('Invalid domain: each domain must be a non-empty string');
         break;
       }
+      if (!isSafeName(d.trim())) {
+        errors.push(
+          `Invalid domain '${d}': only [A-Za-z0-9._-] characters are allowed`
+        );
+      }
     }
   }
 
@@ -157,6 +196,7 @@ export function validateConfig(config: unknown): ConfigValidationResult {
     errors.push("'tools' must be a non-empty array");
   } else {
     const toolNames = new Set<string>();
+    const toolFolders = new Set<string>();
     for (const t of tools) {
       if (!isRecord(t)) {
         errors.push('Each tool must be an object');
@@ -177,10 +217,33 @@ export function validateConfig(config: unknown): ConfigValidationResult {
         continue;
       }
 
+      if (!isSafeName(name)) {
+        errors.push(
+          `Invalid tool name '${name}': only [A-Za-z0-9._-] characters are allowed`
+        );
+      }
+      if (name.includes('--')) {
+        errors.push(
+          `Invalid tool name '${name}': must not contain '--' (reserved for tool-prefix routing)`
+        );
+      }
       if (toolNames.has(name)) {
         errors.push(`Duplicate tool name: '${name}'`);
       }
       toolNames.add(name);
+
+      if (typeof folder === 'string') {
+        if (!isSafeRelativeFolder(folder)) {
+          errors.push(
+            `Invalid tool folder '${folder}' for tool '${name}': must be a relative path using only [A-Za-z0-9._-]`
+          );
+        } else if (toolFolders.has(folder)) {
+          errors.push(
+            `Duplicate tool folder '${folder}' (tools must target distinct folders)`
+          );
+        }
+        toolFolders.add(folder);
+      }
     }
   }
 
@@ -207,26 +270,44 @@ export function validateConfig(config: unknown): ConfigValidationResult {
       }
 
       if (typeof name === 'string') {
+        if (!isSafeName(name)) {
+          errors.push(
+            `Invalid source name '${name}': only [A-Za-z0-9._-] characters are allowed`
+          );
+        }
         if (sourceNames.has(name)) {
           errors.push(`Duplicate source name: '${name}'`);
         }
         sourceNames.add(name);
       }
 
-      if (branch && typeof source === 'string' && !isRemoteSource(source)) {
-        errors.push(
-          `Source '${String(name)}': 'branch' is only valid for remote sources`
-        );
+      if (branch !== undefined && branch !== null) {
+        if (typeof branch !== 'string' || !branch.trim()) {
+          errors.push(
+            `Source '${String(name)}': 'branch' must be a non-empty string`
+          );
+        } else if (!/^[A-Za-z0-9._/-]+$/.test(branch) || branch.startsWith('-')) {
+          errors.push(
+            `Source '${String(name)}': invalid branch '${branch}' (allowed: [A-Za-z0-9._/-], must not start with '-')`
+          );
+        } else if (typeof source === 'string' && !isRemoteSource(source)) {
+          errors.push(
+            `Source '${String(name)}': 'branch' is only valid for remote sources`
+          );
+        }
       }
 
-      if (
-        typeof source === 'string' &&
-        !isRemoteSource(source) &&
-        !source.startsWith('/')
-      ) {
-        errors.push(
-          `Source '${String(name)}': local source paths must be absolute (got '${source}')`
-        );
+      if (typeof source === 'string') {
+        if (source.startsWith('-')) {
+          errors.push(
+            `Source '${String(name)}': source must not start with '-' (got '${source}')`
+          );
+        }
+        if (!isRemoteSource(source) && !isAbsolute(source)) {
+          errors.push(
+            `Source '${String(name)}': local source paths must be absolute (got '${source}')`
+          );
+        }
       }
     }
   }

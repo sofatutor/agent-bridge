@@ -1,6 +1,6 @@
-import { execSync } from 'node:child_process';
-import { mkdir, readdir, rm } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { mkdir, readdir, rm, writeFile, access } from 'node:fs/promises';
+import { join, isAbsolute, resolve } from 'node:path';
 import {
   type SourceConfig,
   type BridgeConfig,
@@ -14,8 +14,61 @@ import { dirExists } from './fs.js';
 // Helpers
 // ---------------------------------------------------------------------------
 
-function exec(cmd: string, cwd: string): string {
-  return execSync(cmd, { cwd, encoding: 'utf-8', stdio: 'pipe' }).trim();
+/**
+ * Marker file written inside every directory Agent Bridge manages under
+ * `.agent-bridge/`. Used to gate destructive cleanup so we never delete
+ * user-placed content.
+ */
+const SOURCE_MARKER = '.agent-bridge-managed';
+
+function git(args: string[], cwd?: string): string {
+  return execFileSync('git', args, {
+    cwd,
+    encoding: 'utf-8',
+    stdio: 'pipe',
+  }).trim();
+}
+
+/**
+ * Branch names must not contain shell metacharacters or leading dashes
+ * (which could be mistaken for git flags). Conservative but safe.
+ */
+function assertSafeBranch(branch: string, sourceName: string): void {
+  if (!/^[A-Za-z0-9._/-]+$/.test(branch) || branch.startsWith('-')) {
+    throw new Error(
+      `Source '${sourceName}': invalid branch name '${branch}'. ` +
+        `Branch must match [A-Za-z0-9._/-]+ and not start with '-'.`
+    );
+  }
+}
+
+/**
+ * Reject source URLs that begin with '-' to prevent them being interpreted
+ * as CLI flags by git.
+ */
+function assertSafeSourceUrl(source: string, sourceName: string): void {
+  if (source.startsWith('-')) {
+    throw new Error(
+      `Source '${sourceName}': URL must not start with '-' (got '${source}').`
+    );
+  }
+}
+
+async function writeSourceMarker(dest: string): Promise<void> {
+  await writeFile(
+    join(dest, SOURCE_MARKER),
+    'This directory is managed by agent-bridge. Do not edit manually.\n',
+    'utf-8'
+  );
+}
+
+async function hasSourceMarker(dir: string): Promise<boolean> {
+  try {
+    await access(join(dir, SOURCE_MARKER));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -26,39 +79,59 @@ export async function cloneSource(
   repoRoot: string,
   source: SourceConfig
 ): Promise<void> {
+  assertSafeSourceUrl(source.source, source.name);
+  if (source.branch) assertSafeBranch(source.branch, source.name);
+
   const dest = sourceDir(repoRoot, source.name);
 
   await mkdir(bridgeDir(repoRoot), { recursive: true });
 
-  const branchArgs = source.branch
-    ? `--single-branch --branch ${source.branch}`
-    : '';
-  execSync(
-    `git clone --depth 1 ${branchArgs} ${source.source} ${dest}`,
-    { stdio: 'pipe' }
-  );
+  const args = ['clone', '--depth', '1'];
+  if (source.branch) {
+    args.push('--single-branch', '--branch', source.branch);
+  }
+  // '--' terminates option parsing so the URL / dest can never be read as flags.
+  args.push('--', source.source, dest);
+
+  execFileSync('git', args, { stdio: 'pipe' });
+
+  await writeSourceMarker(dest);
 }
 
 export async function fetchSource(
   repoRoot: string,
   source: SourceConfig
 ): Promise<void> {
+  assertSafeSourceUrl(source.source, source.name);
+  if (source.branch) assertSafeBranch(source.branch, source.name);
+
   const dest = sourceDir(repoRoot, source.name);
 
-  exec('git fetch --prune origin', dest);
+  git(['fetch', '--prune', 'origin'], dest);
 
   if (source.branch) {
-    const currentBranch = exec('git rev-parse --abbrev-ref HEAD', dest);
+    const currentBranch = git(['rev-parse', '--abbrev-ref', 'HEAD'], dest);
     if (currentBranch !== source.branch) {
-      exec(`git checkout ${source.branch}`, dest);
+      // Branch changed in config — ensure we have the ref then check it out.
+      // A shallow --single-branch clone only has one branch, so fetch the
+      // new branch explicitly before checkout.
+      try {
+        git(['fetch', '--depth', '1', 'origin', source.branch], dest);
+      } catch {
+        // If fetch fails, let checkout surface the real error.
+      }
+      git(['checkout', source.branch], dest);
     }
   }
 
   try {
-    exec('git pull --ff-only', dest);
+    git(['pull', '--ff-only'], dest);
   } catch {
     // pull may fail for tags or detached HEAD — that's okay after fetch
   }
+
+  // Refresh marker (in case the directory was restored from backup without it).
+  await writeSourceMarker(dest);
 }
 
 // ---------------------------------------------------------------------------
@@ -70,7 +143,7 @@ export function resolveLocalSource(
   source: SourceConfig
 ): string {
   const raw = source.source;
-  if (raw.startsWith('/')) return raw;
+  if (isAbsolute(raw)) return raw;
   return resolve(repoRoot, raw);
 }
 
@@ -152,6 +225,14 @@ export async function syncAllSources(
 // Remove sources that no longer exist in config
 // ---------------------------------------------------------------------------
 
+/**
+ * Remove cloned source directories under `.agent-bridge/` that are no longer
+ * referenced in config. Only directories carrying the Agent Bridge marker
+ * file are eligible for deletion — user-placed content is always preserved.
+ *
+ * For backwards compatibility with clones created before the marker existed,
+ * directories containing a `.git` folder are also treated as stale.
+ */
 export async function removeStaleSourceDirs(
   repoRoot: string,
   config: BridgeConfig
@@ -170,15 +251,16 @@ export async function removeStaleSourceDirs(
     if (!entry.isDirectory()) continue;
     if (configuredNames.has(entry.name)) continue;
 
-    // Check if this looks like a cloned source (has .git)
-    const dotGit = join(bridge, entry.name, '.git');
-    if (await dirExists(dotGit)) {
-      await rm(join(bridge, entry.name), { recursive: true, force: true });
+    const candidate = join(bridge, entry.name);
+
+    if (
+      (await hasSourceMarker(candidate)) ||
+      (await dirExists(join(candidate, '.git')))
+    ) {
+      await rm(candidate, { recursive: true, force: true });
       removed.push(entry.name);
     }
   }
 
   return removed;
 }
-
-

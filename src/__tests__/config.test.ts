@@ -176,9 +176,7 @@ describe('config I/O', () => {
       'utf-8'
     );
 
-    await expect(loadConfig(tmpDir)).rejects.toThrow(
-      "Invalid config: 'tools' must be a non-empty array"
-    );
+    await expect(loadConfig(tmpDir)).rejects.toThrow('Invalid config:');
   });
 
   it('saveConfig is idempotent (overwrites cleanly)', async () => {
@@ -201,7 +199,7 @@ describe('validateConfig', () => {
   it('fails when config is not an object', () => {
     const result = validateConfig([]);
     expect(result.ok).toBe(false);
-    expect(result.errors[0]).toContain('YAML object');
+    expect(result.errors[0]).toContain('expected object');
   });
 
   it('passes for a valid config', () => {
@@ -216,7 +214,7 @@ describe('validateConfig', () => {
       tools: ['vscode'],
     });
     expect(result.ok).toBe(false);
-    expect(result.errors).toContain('Each tool must be an object');
+    expect(result.errors.some(e => e.includes('tools') && e.includes('object'))).toBe(true);
   });
 
   it('fails when a source entry is not an object', () => {
@@ -225,7 +223,7 @@ describe('validateConfig', () => {
       sources: ['hub'],
     });
     expect(result.ok).toBe(false);
-    expect(result.errors).toContain('Each source must be an object');
+    expect(result.errors.some(e => e.includes('sources') && e.includes('object'))).toBe(true);
   });
 
   // --- domains ---

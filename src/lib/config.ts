@@ -1,70 +1,129 @@
 import { readFile, writeFile, access, mkdir } from 'node:fs/promises';
 import { join, isAbsolute } from 'node:path';
 import yaml from 'js-yaml';
+import { z } from 'zod';
 
 // ---------------------------------------------------------------------------
-// Name / path safety
+// Zod Schemas
 // ---------------------------------------------------------------------------
 
-/**
- * Characters allowed in identifier-like fields (tool name, source name,
- * domain). Keep this conservative so values are always safe as directory
- * names on any platform.
- */
 const SAFE_NAME_RE = /^[A-Za-z0-9._-]+$/;
 
-function isSafeName(value: string): boolean {
-  return SAFE_NAME_RE.test(value) && value !== '.' && value !== '..';
-}
+const safeName = z
+  .string()
+  .min(1)
+  .refine((v) => SAFE_NAME_RE.test(v) && v !== '.' && v !== '..', {
+    message: 'Only [A-Za-z0-9._-] characters allowed, cannot be . or ..',
+  });
 
-/**
- * Folder paths are relative, use only safe path segments, and never
- * traverse out of the repo root.
- */
-function isSafeRelativeFolder(value: string): boolean {
-  if (!value.trim()) return false;
-  if (isAbsolute(value)) return false;
-  if (value.includes('\0')) return false;
-  // Normalize separators for a cross-platform check.
-  const segments = value.split(/[\\/]/).filter((s) => s.length > 0);
-  if (segments.length === 0) return false;
-  for (const seg of segments) {
-    if (seg === '..' || seg === '.') return false;
-    // Allow a single leading dot (e.g. .github) but no other weird chars.
-    if (!/^\.?[A-Za-z0-9._-]+$/.test(seg)) return false;
-  }
-  return true;
-}
+const safeRelativeFolder = z
+  .string()
+  .min(1)
+  .refine(
+    (value) => {
+      if (isAbsolute(value) || value.includes('\0')) return false;
+      const segments = value.split(/[\\/]/).filter((s) => s.length > 0);
+      if (segments.length === 0) return false;
+      return segments.every(
+        (seg) => seg !== '..' && seg !== '.' && /^\.?[A-Za-z0-9._-]+$/.test(seg)
+      );
+    },
+    { message: 'Must be a relative path using only [A-Za-z0-9._-]' }
+  );
+
+const toolConfigSchema = z.object({
+  name: safeName.refine((v) => !v.includes('--'), {
+    message: "Must not contain '--' (reserved for tool-prefix routing)",
+  }),
+  folder: safeRelativeFolder,
+});
+
+const sourceConfigSchema = z.object({
+  name: safeName,
+  source: z.string().min(1).refine((v) => !v.startsWith('-'), {
+    message: "Must not start with '-'",
+  }),
+  branch: z
+    .string()
+    .refine((v) => /^[A-Za-z0-9._/-]+$/.test(v) && !v.startsWith('-'), {
+      message: "Must match [A-Za-z0-9._/-] and not start with '-'",
+    })
+    .optional(),
+});
+
+const bridgeConfigSchema = z
+  .object({
+    version: z.string().optional(),
+    domains: z.array(safeName).min(1, "'domains' must be a non-empty array"),
+    tools: z.array(toolConfigSchema).min(1, "'tools' must be a non-empty array"),
+    sources: z.array(sourceConfigSchema).min(1, "'sources' must be a non-empty array"),
+  })
+  .superRefine((data, ctx) => {
+    // Check unique tool names
+    const toolNames = new Set<string>();
+    const toolFolders = new Set<string>();
+    data.tools.forEach((t, i) => {
+      if (toolNames.has(t.name)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Duplicate tool name: '${t.name}'`,
+          path: ['tools', i, 'name'],
+        });
+      }
+      toolNames.add(t.name);
+      if (toolFolders.has(t.folder)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Duplicate tool folder: '${t.folder}'`,
+          path: ['tools', i, 'folder'],
+        });
+      }
+      toolFolders.add(t.folder);
+    });
+
+    // Check unique source names and branch validity
+    const sourceNames = new Set<string>();
+    data.sources.forEach((s, i) => {
+      if (sourceNames.has(s.name)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Duplicate source name: '${s.name}'`,
+          path: ['sources', i, 'name'],
+        });
+      }
+      sourceNames.add(s.name);
+
+      const isRemote =
+        s.source.startsWith('https://') ||
+        s.source.startsWith('http://') ||
+        s.source.startsWith('file://') ||
+        /^[\w.-]+@[\w.-]+:/.test(s.source);
+
+      if (s.branch && !isRemote) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "'branch' is only valid for remote sources",
+          path: ['sources', i, 'branch'],
+        });
+      }
+      if (!isRemote && !isAbsolute(s.source)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Local source paths must be absolute',
+          path: ['sources', i, 'source'],
+        });
+      }
+    });
+  });
 
 // ---------------------------------------------------------------------------
-// Types
+// Types (inferred from Zod schemas)
 // ---------------------------------------------------------------------------
 
 export type SourceType = 'git-https' | 'git-ssh' | 'local';
-
-export interface ToolConfig {
-  name: string;
-  folder: string;
-}
-
-export interface SourceConfig {
-  name: string;
-  source: string;
-  branch?: string;
-}
-
-export interface BridgeConfig {
-  version?: string;
-  domains: string[];
-  tools: ToolConfig[];
-  sources: SourceConfig[];
-}
-
-type UnknownRecord = Record<string, unknown>;
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+export type ToolConfig = z.infer<typeof toolConfigSchema>;
+export type SourceConfig = z.infer<typeof sourceConfigSchema>;
+export type BridgeConfig = z.infer<typeof bridgeConfigSchema>;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -129,16 +188,15 @@ export async function loadConfig(repoRoot: string): Promise<BridgeConfig> {
   const raw = await readFile(configPath(repoRoot), 'utf-8');
   const data = yaml.load(raw);
 
-  if (!isRecord(data)) {
-    throw new Error('Invalid config: config.yml is not a valid YAML object');
+  const result = bridgeConfigSchema.safeParse(data);
+  if (!result.success) {
+    const errors = result.error.issues.map(
+      (i) => `${i.path.join('.')}: ${i.message}`
+    );
+    throw new Error(`Invalid config: ${errors.join('; ')}`);
   }
 
-  const validation = validateConfig(data);
-  if (!validation.ok) {
-    throw new Error(`Invalid config: ${validation.errors.join('; ')}`);
-  }
-
-  return data as unknown as BridgeConfig;
+  return result.data;
 }
 
 export async function saveConfig(
@@ -152,7 +210,7 @@ export async function saveConfig(
 }
 
 // ---------------------------------------------------------------------------
-// Validation
+// Validation (legacy interface for tests)
 // ---------------------------------------------------------------------------
 
 export interface ConfigValidationResult {
@@ -161,156 +219,12 @@ export interface ConfigValidationResult {
 }
 
 export function validateConfig(config: unknown): ConfigValidationResult {
-  const errors: string[] = [];
-
-  if (!isRecord(config)) {
-    return {
-      ok: false,
-      errors: ['Config must be a YAML object'],
-    };
+  const result = bridgeConfigSchema.safeParse(config);
+  if (result.success) {
+    return { ok: true, errors: [] };
   }
-
-  const domains = config.domains;
-  const tools = config.tools;
-  const sources = config.sources;
-
-  // domains
-  if (!Array.isArray(domains) || domains.length === 0) {
-    errors.push("'domains' must be a non-empty array of strings");
-  } else {
-    for (const d of domains) {
-      if (typeof d !== 'string' || !d.trim()) {
-        errors.push('Invalid domain: each domain must be a non-empty string');
-        break;
-      }
-      if (!isSafeName(d.trim())) {
-        errors.push(
-          `Invalid domain '${d}': only [A-Za-z0-9._-] characters are allowed`
-        );
-      }
-    }
-  }
-
-  // tools
-  if (!Array.isArray(tools) || tools.length === 0) {
-    errors.push("'tools' must be a non-empty array");
-  } else {
-    const toolNames = new Set<string>();
-    const toolFolders = new Set<string>();
-    for (const t of tools) {
-      if (!isRecord(t)) {
-        errors.push('Each tool must be an object');
-        continue;
-      }
-
-      const name = t.name;
-      const folder = t.folder;
-
-      if (!name || typeof name !== 'string') {
-        errors.push("Each tool must have a non-empty 'name'");
-      }
-      if (!folder || typeof folder !== 'string') {
-        errors.push("Each tool must have a non-empty 'folder'");
-      }
-
-      if (typeof name !== 'string') {
-        continue;
-      }
-
-      if (!isSafeName(name)) {
-        errors.push(
-          `Invalid tool name '${name}': only [A-Za-z0-9._-] characters are allowed`
-        );
-      }
-      if (name.includes('--')) {
-        errors.push(
-          `Invalid tool name '${name}': must not contain '--' (reserved for tool-prefix routing)`
-        );
-      }
-      if (toolNames.has(name)) {
-        errors.push(`Duplicate tool name: '${name}'`);
-      }
-      toolNames.add(name);
-
-      if (typeof folder === 'string') {
-        if (!isSafeRelativeFolder(folder)) {
-          errors.push(
-            `Invalid tool folder '${folder}' for tool '${name}': must be a relative path using only [A-Za-z0-9._-]`
-          );
-        } else if (toolFolders.has(folder)) {
-          errors.push(
-            `Duplicate tool folder '${folder}' (tools must target distinct folders)`
-          );
-        }
-        toolFolders.add(folder);
-      }
-    }
-  }
-
-  // sources
-  if (!Array.isArray(sources) || sources.length === 0) {
-    errors.push("'sources' must be a non-empty array");
-  } else {
-    const sourceNames = new Set<string>();
-    for (const s of sources) {
-      if (!isRecord(s)) {
-        errors.push('Each source must be an object');
-        continue;
-      }
-
-      const name = s.name;
-      const source = s.source;
-      const branch = s.branch;
-
-      if (!name || typeof name !== 'string') {
-        errors.push("Each source must have a non-empty 'name'");
-      }
-      if (!source || typeof source !== 'string') {
-        errors.push("Each source must have a non-empty 'source' URL or path");
-      }
-
-      if (typeof name === 'string') {
-        if (!isSafeName(name)) {
-          errors.push(
-            `Invalid source name '${name}': only [A-Za-z0-9._-] characters are allowed`
-          );
-        }
-        if (sourceNames.has(name)) {
-          errors.push(`Duplicate source name: '${name}'`);
-        }
-        sourceNames.add(name);
-      }
-
-      if (branch !== undefined && branch !== null) {
-        if (typeof branch !== 'string' || !branch.trim()) {
-          errors.push(
-            `Source '${String(name)}': 'branch' must be a non-empty string`
-          );
-        } else if (!/^[A-Za-z0-9._/-]+$/.test(branch) || branch.startsWith('-')) {
-          errors.push(
-            `Source '${String(name)}': invalid branch '${branch}' (allowed: [A-Za-z0-9._/-], must not start with '-')`
-          );
-        } else if (typeof source === 'string' && !isRemoteSource(source)) {
-          errors.push(
-            `Source '${String(name)}': 'branch' is only valid for remote sources`
-          );
-        }
-      }
-
-      if (typeof source === 'string') {
-        if (source.startsWith('-')) {
-          errors.push(
-            `Source '${String(name)}': source must not start with '-' (got '${source}')`
-          );
-        }
-        if (!isRemoteSource(source) && !isAbsolute(source)) {
-          errors.push(
-            `Source '${String(name)}': local source paths must be absolute (got '${source}')`
-          );
-        }
-      }
-    }
-  }
-
-  return { ok: errors.length === 0, errors };
+  const errors = result.error.issues.map(
+    (i) => `${i.path.join('.')}: ${i.message}`
+  );
+  return { ok: false, errors };
 }

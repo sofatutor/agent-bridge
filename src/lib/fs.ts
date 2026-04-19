@@ -1,5 +1,6 @@
-import { stat, readdir, copyFile, mkdir, rm, writeFile, readFile, access, unlink } from 'node:fs/promises';
+import { readdir, copyFile, stat } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
+import { pathExists, remove, outputFile, readFile as fsReadFile, ensureDir } from 'fs-extra';
 
 /** Name of the marker file placed inside every synced feature folder. */
 export const MARKER_FILENAME = '.agentbridge';
@@ -14,12 +15,7 @@ export async function dirExists(p: string): Promise<boolean> {
 }
 
 export async function fileExists(p: string): Promise<boolean> {
-  try {
-    await access(p);
-    return true;
-  } catch {
-    return false;
-  }
+  return pathExists(p);
 }
 
 export async function listFilesRecursive(dir: string): Promise<string[]> {
@@ -51,7 +47,7 @@ export async function copyDirContents(srcDir: string, destDir: string): Promise<
   for (const relFile of files) {
     const srcFile = join(srcDir, relFile);
     const destFile = join(destDir, relFile);
-    await mkdir(dirname(destFile), { recursive: true });
+    await ensureDir(dirname(destFile));
     await copyFile(srcFile, destFile);
   }
 }
@@ -60,32 +56,28 @@ export async function copyDirContents(srcDir: string, destDir: string): Promise<
  * Write the `.agentbridge` marker file into a feature folder.
  */
 export async function writeMarker(featureDir: string): Promise<void> {
-  await writeFile(join(featureDir, MARKER_FILENAME), '', 'utf-8');
+  await outputFile(join(featureDir, MARKER_FILENAME), '');
 }
 
 /**
  * Check whether a directory contains the `.agentbridge` marker.
  */
 export async function hasMarker(featureDir: string): Promise<boolean> {
-  return fileExists(join(featureDir, MARKER_FILENAME));
+  return pathExists(join(featureDir, MARKER_FILENAME));
 }
 
 /**
  * Remove a directory and all its contents.
  */
 export async function removeDir(dir: string): Promise<void> {
-  await rm(dir, { recursive: true, force: true });
+  await remove(dir);
 }
 
 /**
  * Remove a single file.
  */
 export async function removeFile(filePath: string): Promise<void> {
-  try {
-    await unlink(filePath);
-  } catch {
-    // File may not exist, ignore
-  }
+  await remove(filePath);
 }
 
 // ---------------------------------------------------------------------------
@@ -99,7 +91,7 @@ export async function removeFile(filePath: string): Promise<void> {
 export async function readManifest(dir: string): Promise<string[]> {
   const manifestPath = join(dir, MARKER_FILENAME);
   try {
-    const content = await readFile(manifestPath, 'utf-8');
+    const content = await fsReadFile(manifestPath, 'utf-8');
     return content.split('\n').filter((line) => line.trim().length > 0);
   } catch {
     return [];
@@ -125,9 +117,8 @@ export function manifestEntryName(entry: string): string {
  */
 export async function writeManifest(dir: string, entries: string[]): Promise<void> {
   const manifestPath = join(dir, MARKER_FILENAME);
-  await mkdir(dirname(manifestPath), { recursive: true });
   const content = entries.length > 0 ? entries.join('\n') + '\n' : '';
-  await writeFile(manifestPath, content, 'utf-8');
+  await outputFile(manifestPath, content);
 }
 
 /**
@@ -152,8 +143,7 @@ export async function removeFromManifest(dir: string, entry: string): Promise<vo
   if (updated.length !== existing.length) {
     if (updated.length === 0) {
       // Remove manifest file when empty
-      const manifestPath = join(dir, MARKER_FILENAME);
-      await unlink(manifestPath).catch(() => {});
+      await remove(join(dir, MARKER_FILENAME));
     } else {
       await writeManifest(dir, updated);
     }

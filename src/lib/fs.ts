@@ -1,6 +1,8 @@
 import { readdir, copyFile, stat } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
-import { pathExists, remove, outputFile, readFile as fsReadFile, ensureDir } from 'fs-extra';
+import fsExtra from 'fs-extra';
+
+const { pathExists, remove, outputFile, readFile: fsReadFile, ensureDir } = fsExtra;
 
 /** Name of the marker file placed inside every synced feature folder. */
 export const MARKER_FILENAME = '.agentbridge';

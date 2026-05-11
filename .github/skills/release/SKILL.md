@@ -125,7 +125,21 @@ gh release create "v<version>" --title "v<version>" --prerelease --notes "Develo
 
 ### 8. Show install command
 
-After the release is complete, always show the user the install command:
+After the release is complete, always show the user the install commands.
+
+**For stable releases**, recommend the semver syntax (auto-updates within range, avoids npm caching issues with pinned git tags):
+
+```
+✓ Released v<version>
+
+Install via (recommended — auto-updates on npm install):
+"@sofatutor/agent-bridge": "github:sofatutor/agent-bridge#semver:^<version>"
+
+Or pin to this exact version:
+"@sofatutor/agent-bridge": "github:sofatutor/agent-bridge#v<version>"
+```
+
+**For beta/dev releases**, always pin to the exact tag (semver ranges won't match prereleases):
 
 ```
 ✓ Released v<version>
@@ -183,12 +197,15 @@ Command: release dev
 ```json
 {
   "dependencies": {
+    "@sofatutor/agent-bridge": "github:sofatutor/agent-bridge#semver:^0.4.0",
     "@sofatutor/agent-bridge": "github:sofatutor/agent-bridge#v0.4.0",
     "@sofatutor/agent-bridge": "github:sofatutor/agent-bridge#v0.5.0-beta.1",
     "@sofatutor/agent-bridge": "github:sofatutor/agent-bridge#v0.4.0-dev.abc1234"
   }
 }
 ```
+
+**Note on npm caching:** When using a pinned tag (`#v0.4.0`), npm caches the resolved commit SHA in `package-lock.json` and won't pick up new releases on `npm install`. Use the `#semver:^x.y.z` syntax instead so npm resolves tags as semver and updates within the range. To force an update from a pinned tag, run `npm uninstall @sofatutor/agent-bridge && npm install github:sofatutor/agent-bridge#v<new-version>`.
 
 ## Edge Cases
 

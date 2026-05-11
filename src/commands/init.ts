@@ -23,6 +23,35 @@ const CUSTOM_TOOL_SENTINEL: ToolConfig = { name: '__custom__', folder: '__custom
 
 const DEFAULT_DOMAINS = ['backend', 'frontend', 'shared'];
 
+/**
+ * Derive a short source name from a URL or local path.
+ *
+ * Examples:
+ *   https://github.com/org/repo.git  → repo
+ *   git@github.com:org/repo.git      → repo
+ *   file:///tmp/bare.git             → bare
+ *   /path/to/my-folder               → my-folder
+ */
+export function deriveSourceName(source: string): string {
+  let segment = source;
+
+  // SSH: git@host:org/repo.git → org/repo.git
+  const sshMatch = segment.match(/^[\w.-]+@[\w.-]+:(.+)$/);
+  if (sshMatch) segment = sshMatch[1];
+
+  // Strip protocol + host for URLs
+  try {
+    const url = new URL(segment);
+    segment = url.pathname;
+  } catch {
+    // not a URL — keep as-is (local path or already stripped)
+  }
+
+  // Take the last path component, strip trailing slashes and .git suffix
+  const base = segment.replace(/\/+$/, '').split('/').pop() ?? segment;
+  return base.replace(/\.git$/, '') || 'source';
+}
+
 export async function initCommand(
   cwd?: string,
   opts?: { force?: boolean }
@@ -122,29 +151,21 @@ export async function initCommand(
   const sources: SourceConfig[] = [];
 
   const addSource = async (): Promise<boolean> => {
-    const name = await p.text({
-      message: 'Source name',
-      placeholder: 'company-standards',
-      defaultValue: '',
-      validate: (v) => {
-        if (!v.trim()) return 'Source name cannot be empty';
-        if (sources.some((s) => s.name === v.trim()))
-          return 'Source name already used';
-      },
-    });
-    if (p.isCancel(name)) return false;
-
     const source = await p.text({
       message: 'Source URL or local path',
       placeholder: 'https://github.com/org/repo.git',
       defaultValue: '',
       validate: (v) => {
         if (!v.trim()) return 'Source URL/path cannot be empty';
+        const derived = deriveSourceName(v.trim());
+        if (sources.some((s) => s.name === derived))
+          return `Source name "${derived}" (derived from URL) already used`;
       },
     });
     if (p.isCancel(source)) return false;
 
-    const entry: SourceConfig = { name: name.trim(), source: source.trim() };
+    const name = deriveSourceName(source.trim());
+    const entry: SourceConfig = { name, source: source.trim() };
 
     // Resolve local paths to absolute
     if (!isRemoteSource(entry.source)) {

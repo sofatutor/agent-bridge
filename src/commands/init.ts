@@ -10,7 +10,7 @@ import {
   type SourceConfig,
 } from '../lib/config.js';
 import { findRepoRoot, isInGitRepo, installGitHooks } from '../lib/git.js';
-import { syncAllSources } from '../lib/sources.js';
+import { syncAllSources, ensureBridgeGitignore } from '../lib/sources.js';
 import { VERSION } from '../lib/version.js';
 
 const WELL_KNOWN_TOOLS = [
@@ -218,6 +218,7 @@ export async function initCommand(
   };
 
   await saveConfig(repoRoot, config);
+  await ensureBridgeGitignore(repoRoot);
   p.log.success('Saved .agent-bridge/config.yml');
 
   // Clone remote sources

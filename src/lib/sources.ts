@@ -218,7 +218,29 @@ export async function syncAllSources(
   repoRoot: string,
   config: BridgeConfig
 ): Promise<SourceSyncResult[]> {
+  await ensureBridgeGitignore(repoRoot);
   return Promise.all(config.sources.map((source) => syncSource(repoRoot, source)));
+}
+
+// ---------------------------------------------------------------------------
+// Ensure .gitignore in .agent-bridge/
+// ---------------------------------------------------------------------------
+
+/**
+ * Write a `.gitignore` inside `.agent-bridge/` that ignores cloned source
+ * directories (which are nested git repos) while keeping `config.yml` tracked.
+ * Without this, git sees the nested repos as gitlinks/submodules and creates
+ * phantom dirty-state changes.
+ */
+export async function ensureBridgeGitignore(repoRoot: string): Promise<void> {
+  const bridge = bridgeDir(repoRoot);
+  await mkdir(bridge, { recursive: true });
+
+  const gitignorePath = join(bridge, '.gitignore');
+  const lines = ['# Ignore cloned sources', '*', '!config.yml', '!.gitignore'];
+  const content = lines.join('\n') + '\n';
+
+  await writeFile(gitignorePath, content, 'utf-8');
 }
 
 // ---------------------------------------------------------------------------

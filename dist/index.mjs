@@ -534,7 +534,24 @@ async function syncSource(repoRoot, source) {
 	}
 }
 async function syncAllSources(repoRoot, config) {
+	await ensureBridgeGitignore(repoRoot);
 	return Promise.all(config.sources.map((source) => syncSource(repoRoot, source)));
+}
+/**
+* Write a `.gitignore` inside `.agent-bridge/` that ignores cloned source
+* directories (which are nested git repos) while keeping `config.yml` tracked.
+* Without this, git sees the nested repos as gitlinks/submodules and creates
+* phantom dirty-state changes.
+*/
+async function ensureBridgeGitignore(repoRoot) {
+	const bridge = bridgeDir(repoRoot);
+	await mkdir(bridge, { recursive: true });
+	await writeFile(join(bridge, ".gitignore"), [
+		"# Ignore cloned sources",
+		"*",
+		"!config.yml",
+		"!.gitignore"
+	].join("\n") + "\n", "utf-8");
 }
 /**
 * Remove cloned source directories under `.agent-bridge/` that are no longer
@@ -566,7 +583,7 @@ async function removeStaleSourceDirs(repoRoot, config) {
 }
 //#endregion
 //#region src/lib/version.ts
-const VERSION = "0.5.2";
+const VERSION = "0.5.3";
 //#endregion
 //#region src/commands/init.ts
 const WELL_KNOWN_TOOLS = [
@@ -743,6 +760,7 @@ async function initCommand(cwd, opts) {
 		sources
 	};
 	await saveConfig(repoRoot, config);
+	await ensureBridgeGitignore(repoRoot);
 	p.log.success("Saved .agent-bridge/config.yml");
 	const s = p.spinner();
 	s.start("Fetching remote sources…");

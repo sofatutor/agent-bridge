@@ -1,6 +1,7 @@
 import * as p from '@clack/prompts';
 import { loadConfig } from '../lib/config.js';
 import { findRepoRoot } from '../lib/git.js';
+import { runMigrations } from '../lib/migrations/index.js';
 import { syncAllSources } from '../lib/sources.js';
 
 export async function updateCommand(cwd?: string, _opts?: unknown): Promise<void> {
@@ -9,6 +10,17 @@ export async function updateCommand(cwd?: string, _opts?: unknown): Promise<void
   p.intro('Agent Bridge — Update Sources');
 
   const config = await loadConfig(repoRoot);
+
+  // Run pending migrations if config version is outdated
+  const migrationResult = await runMigrations(repoRoot);
+  if (migrationResult) {
+    p.log.info(
+      `Config upgraded ${migrationResult.fromVersion} → ${migrationResult.toVersion}` +
+        (migrationResult.applied.length > 0
+          ? ` (${migrationResult.applied.length} migration(s))`
+          : '')
+    );
+  }
 
   const s = p.spinner();
   s.start('Updating all remote sources…');

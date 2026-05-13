@@ -1,6 +1,7 @@
 import * as p from '@clack/prompts';
 import { loadConfig } from '../lib/config.js';
 import { findRepoRoot } from '../lib/git.js';
+import { runMigrations } from '../lib/migrations/index.js';
 import {
   discoverFeatureTypes,
   scanFeatures,
@@ -27,6 +28,17 @@ export async function syncCommand(cwd?: string, _opts?: unknown): Promise<void> 
   s.start('Loading configuration…');
 
   const config = await loadConfig(repoRoot);
+
+  // Run pending migrations if config version is outdated
+  const migrationResult = await runMigrations(repoRoot);
+  if (migrationResult) {
+    p.log.info(
+      `Config upgraded ${migrationResult.fromVersion} → ${migrationResult.toVersion}` +
+        (migrationResult.applied.length > 0
+          ? ` (${migrationResult.applied.length} migration(s))`
+          : '')
+    );
+  }
 
   s.stop('Configuration valid');
 

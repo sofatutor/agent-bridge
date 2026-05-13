@@ -583,7 +583,7 @@ async function removeStaleSourceDirs(repoRoot, config) {
 }
 //#endregion
 //#region src/lib/version.ts
-const VERSION = "0.5.3";
+const VERSION = "0.6.0";
 //#endregion
 //#region src/commands/init.ts
 const WELL_KNOWN_TOOLS = [
@@ -785,6 +785,63 @@ async function initCommand(cwd, opts) {
 		}
 	}
 	p.outro("Done! Run `agent-bridge sync` to sync features.");
+}
+//#endregion
+//#region src/lib/migrations/index.ts
+const migrations = [];
+/** Parse "1.2.3" or "1.2.3-beta.1" into [major, minor, patch]. */
+function parseSemver(version) {
+	const parts = version.replace(/^v/, "").split("-")[0].split(".").map(Number);
+	return [
+		parts[0] ?? 0,
+		parts[1] ?? 0,
+		parts[2] ?? 0
+	];
+}
+/** Returns -1 | 0 | 1 comparing a to b (ignores prerelease). */
+function compareSemver(a, b) {
+	const [aMaj, aMin, aPat] = parseSemver(a);
+	const [bMaj, bMin, bPat] = parseSemver(b);
+	if (aMaj !== bMaj) return aMaj < bMaj ? -1 : 1;
+	if (aMin !== bMin) return aMin < bMin ? -1 : 1;
+	if (aPat !== bPat) return aPat < bPat ? -1 : 1;
+	return 0;
+}
+/**
+* Find migrations that should run when upgrading from `fromVersion` to
+* `toVersion`. Returns them sorted in ascending version order.
+*/
+function pendingMigrations(fromVersion, toVersion) {
+	return migrations.filter((m) => compareSemver(m.version, fromVersion) > 0 && compareSemver(m.version, toVersion) <= 0).sort((a, b) => compareSemver(a.version, b.version));
+}
+/**
+* Run all pending migrations between the config's version and the
+* currently installed VERSION. Updates and saves the config afterwards.
+*
+* Returns null if no migration was needed.
+*/
+async function runMigrations(repoRoot) {
+	let config = await loadConfig(repoRoot);
+	const configVersion = config.version ?? "0.0.0";
+	const cmp = compareSemver(configVersion, VERSION);
+	if (cmp === 0) return null;
+	if (cmp > 0) return null;
+	const pending = pendingMigrations(configVersion, VERSION);
+	const applied = [];
+	for (const migration of pending) {
+		config = await migration.migrate(repoRoot, config);
+		applied.push(migration.version);
+	}
+	config = {
+		...config,
+		version: VERSION
+	};
+	await saveConfig(repoRoot, config);
+	return {
+		fromVersion: configVersion,
+		toVersion: VERSION,
+		applied
+	};
 }
 //#endregion
 //#region src/lib/manifest.ts
@@ -1032,6 +1089,8 @@ async function syncCommand(cwd, _opts) {
 	const s = p.spinner();
 	s.start("Loading configuration…");
 	const config = await loadConfig(repoRoot);
+	const migrationResult = await runMigrations(repoRoot);
+	if (migrationResult) p.log.info(`Config upgraded ${migrationResult.fromVersion} → ${migrationResult.toVersion}` + (migrationResult.applied.length > 0 ? ` (${migrationResult.applied.length} migration(s))` : ""));
 	s.stop("Configuration valid");
 	s.start("Syncing sources…");
 	const sourceResults = await syncAllSources(repoRoot, config);
@@ -1087,6 +1146,8 @@ async function updateCommand(cwd, _opts) {
 	const repoRoot = cwd ?? findRepoRoot();
 	p.intro("Agent Bridge — Update Sources");
 	const config = await loadConfig(repoRoot);
+	const migrationResult = await runMigrations(repoRoot);
+	if (migrationResult) p.log.info(`Config upgraded ${migrationResult.fromVersion} → ${migrationResult.toVersion}` + (migrationResult.applied.length > 0 ? ` (${migrationResult.applied.length} migration(s))` : ""));
 	const s = p.spinner();
 	s.start("Updating all remote sources…");
 	const results = await syncAllSources(repoRoot, config);

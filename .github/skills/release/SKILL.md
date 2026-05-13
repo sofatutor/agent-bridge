@@ -90,15 +90,20 @@ Use the highest-impact change. For pre-1.0 versions, breaking changes bump MINOR
 ### 5. Update version (skip for dev releases)
 
 ```bash
-# Update package.json version
+# Update package.json version (this may trigger lifecycle scripts like "version")
 npm version <new-version> --no-git-tag-version
 
-# Stage the changes
-git add package.json package-lock.json
+# Stage ALL files modified by npm version (includes package.json, package-lock.json,
+# and any files produced by lifecycle scripts like the "version" script)
+git add -A
 
 # Commit the version bump
 git commit -m "chore(release): v<new-version>"
 ```
+
+> **Note:** The `npm version` command triggers the `version` lifecycle script if defined in package.json.
+> This project's `version` script rebuilds `dist/` and stages it. Always use `git add -A` to capture
+> all side effects (lockfile updates, rebuilt artifacts, etc.).
 
 ### 6. Create and push tag
 

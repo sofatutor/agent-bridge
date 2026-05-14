@@ -18,6 +18,7 @@ import {
 import {
   type Feature,
   type RootFile,
+  type ToolRootEntry,
   ROOT_FILES,
   featureMatchesTool,
   featureName,
@@ -403,4 +404,113 @@ export async function syncRootFiles(
   }
 
   return { synced, removed, errors };
+}
+
+// ---------------------------------------------------------------------------
+// Tool root entry sync (_tool convention)
+// ---------------------------------------------------------------------------
+
+export interface ToolRootSyncResult {
+  added: number;
+  updated: number;
+  removed: number;
+  errors: Array<{ path: string; error: string }>;
+}
+
+/**
+ * Reconcile tool root entries: sync expected entries and remove orphans.
+ * Entries from `_tool` directories are copied directly into the tool's root folder.
+ */
+export async function reconcileToolRootEntries(
+  repoRoot: string,
+  config: BridgeConfig,
+  entries: ToolRootEntry[]
+): Promise<ToolRootSyncResult> {
+  let added = 0;
+  let updated = 0;
+  let removed = 0;
+  const errors: Array<{ path: string; error: string }> = [];
+
+  // Build tool name → folder mapping
+  const toolFolders = new Map<string, string>();
+  for (const tool of config.tools) {
+    toolFolders.set(tool.name, tool.folder);
+  }
+
+  // Key = destination path, value = entry info
+  const expectedEntries = new Map<
+    string,
+    { sourcePath: string; name: string; isFile: boolean; toolDir: string }
+  >();
+
+  for (const entry of entries) {
+    const folder = toolFolders.get(entry.toolName);
+    if (!folder) continue;
+
+    const toolDir = join(repoRoot, folder);
+    const destPath = join(toolDir, entry.name);
+
+    expectedEntries.set(destPath, {
+      sourcePath: entry.absolutePath,
+      name: entry.name,
+      isFile: entry.isFile,
+      toolDir,
+    });
+  }
+
+  // Remove orphaned managed entries from tool root directories
+  for (const tool of config.tools) {
+    const toolDir = join(repoRoot, tool.folder);
+    const manifest = await readManifest(toolDir);
+
+    for (const manifestEntry of manifest) {
+      const isFolder = isManifestFolder(manifestEntry);
+      const name = manifestEntryName(manifestEntry);
+      const destPath = join(toolDir, name);
+
+      if (expectedEntries.has(destPath)) continue;
+
+      try {
+        if (isFolder) {
+          await removeDir(destPath);
+        } else {
+          await removeFile(destPath);
+        }
+        await removeFromManifest(toolDir, manifestEntry);
+        removed++;
+      } catch (err) {
+        errors.push({
+          path: destPath,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
+  // Sync expected entries
+  for (const [, expected] of expectedEntries) {
+    try {
+      const result = expected.isFile
+        ? await syncFileFeature(
+            expected.sourcePath,
+            expected.toolDir,
+            expected.name
+          )
+        : await syncFolderFeature(
+            expected.sourcePath,
+            expected.toolDir,
+            expected.name
+          );
+
+      if (result === 'created') added++;
+      else if (result === 'updated') updated++;
+    } catch (err) {
+      errors.push({
+        path: join(expected.toolDir, expected.name),
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return { added, updated, removed, errors };
 }

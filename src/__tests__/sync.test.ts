@@ -11,10 +11,11 @@ import {
   reconcileFeatures,
   syncRootFiles,
   isRootFileManaged,
+  reconcileToolRootEntries,
 } from '../lib/sync.js';
 import { readManifest, MARKER_FILENAME } from '../lib/fs.js';
 import type { BridgeConfig } from '../lib/config.js';
-import type { Feature, RootFile } from '../lib/manifest.js';
+import type { Feature, RootFile, ToolRootEntry } from '../lib/manifest.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -786,5 +787,180 @@ describe('isRootFileManaged', () => {
   it('returns true for marker-only file', async () => {
     await writeFile(join(tmpDir, 'AGENTS.md'), '<!-- Managed by Agent Bridge -->', 'utf-8');
     expect(await isRootFileManaged(join(tmpDir, 'AGENTS.md'))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reconcileToolRootEntries
+// ---------------------------------------------------------------------------
+
+describe('reconcileToolRootEntries', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'agent-bridge-toolroot-'));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  const makeToolConfig = (): BridgeConfig => ({
+    domains: ['shared'],
+    tools: [
+      { name: 'cursor', folder: '.cursor' },
+      { name: 'vscode', folder: '.github' },
+    ],
+    sources: [{ name: 'hub', source: '/tmp/hub' }],
+  });
+
+  it('syncs a file entry to the tool root directory', async () => {
+    const config = makeToolConfig();
+
+    // Create source file
+    const sourceDir = join(tmpDir, 'source');
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(join(sourceDir, 'settings.json'), '{"key": "value"}', 'utf-8');
+
+    const entries: ToolRootEntry[] = [
+      {
+        toolName: 'cursor',
+        name: 'settings.json',
+        source: 'hub',
+        domain: 'shared',
+        absolutePath: join(sourceDir, 'settings.json'),
+        isFile: true,
+      },
+    ];
+
+    const result = await reconcileToolRootEntries(tmpDir, config, entries);
+    expect(result.added).toBe(1);
+    expect(result.errors).toHaveLength(0);
+
+    // Verify file was synced
+    const destContent = await readFile(join(tmpDir, '.cursor', 'settings.json'), 'utf-8');
+    expect(destContent).toBe('{"key": "value"}');
+
+    // Verify manifest entry
+    const manifest = await readManifest(join(tmpDir, '.cursor'));
+    expect(manifest).toContain('settings.json');
+  });
+
+  it('syncs a folder entry to the tool root directory', async () => {
+    const config = makeToolConfig();
+
+    // Create source folder
+    const sourceDir = join(tmpDir, 'source', 'rules');
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(join(sourceDir, 'review.md'), '# Review rules', 'utf-8');
+
+    const entries: ToolRootEntry[] = [
+      {
+        toolName: 'cursor',
+        name: 'rules',
+        source: 'hub',
+        domain: 'shared',
+        absolutePath: join(tmpDir, 'source', 'rules'),
+        isFile: false,
+      },
+    ];
+
+    const result = await reconcileToolRootEntries(tmpDir, config, entries);
+    expect(result.added).toBe(1);
+    expect(result.errors).toHaveLength(0);
+
+    // Verify folder was synced
+    const destContent = await readFile(join(tmpDir, '.cursor', 'rules', 'review.md'), 'utf-8');
+    expect(destContent).toBe('# Review rules');
+
+    // Verify manifest entry (folders have trailing /)
+    const manifest = await readManifest(join(tmpDir, '.cursor'));
+    expect(manifest).toContain('rules/');
+  });
+
+  it('removes orphaned entries not in expected list', async () => {
+    const config = makeToolConfig();
+
+    // Create tool dir with a previously managed file
+    const toolDir = join(tmpDir, '.cursor');
+    await mkdir(toolDir, { recursive: true });
+    await writeFile(join(toolDir, 'old-config.json'), '{}', 'utf-8');
+    await writeFile(join(toolDir, MARKER_FILENAME), 'old-config.json\n', 'utf-8');
+
+    // No entries expected
+    const result = await reconcileToolRootEntries(tmpDir, config, []);
+    expect(result.removed).toBe(1);
+
+    // File should be gone
+    let exists = true;
+    try { await access(join(toolDir, 'old-config.json')); } catch { exists = false; }
+    expect(exists).toBe(false);
+  });
+
+  it('syncs entries to different tools', async () => {
+    const config = makeToolConfig();
+
+    const sourceDir = join(tmpDir, 'source');
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(join(sourceDir, 'cursor.json'), '{"cursor": true}', 'utf-8');
+    await writeFile(join(sourceDir, 'vscode.json'), '{"vscode": true}', 'utf-8');
+
+    const entries: ToolRootEntry[] = [
+      {
+        toolName: 'cursor',
+        name: 'cursor.json',
+        source: 'hub',
+        domain: 'shared',
+        absolutePath: join(sourceDir, 'cursor.json'),
+        isFile: true,
+      },
+      {
+        toolName: 'vscode',
+        name: 'vscode.json',
+        source: 'hub',
+        domain: 'shared',
+        absolutePath: join(sourceDir, 'vscode.json'),
+        isFile: true,
+      },
+    ];
+
+    const result = await reconcileToolRootEntries(tmpDir, config, entries);
+    expect(result.added).toBe(2);
+
+    const cursorContent = await readFile(join(tmpDir, '.cursor', 'cursor.json'), 'utf-8');
+    expect(cursorContent).toBe('{"cursor": true}');
+
+    const vscodeContent = await readFile(join(tmpDir, '.github', 'vscode.json'), 'utf-8');
+    expect(vscodeContent).toBe('{"vscode": true}');
+  });
+
+  it('updates existing managed entries', async () => {
+    const config = makeToolConfig();
+
+    // First sync
+    const sourceDir = join(tmpDir, 'source');
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(join(sourceDir, 'config.json'), '{"v": 1}', 'utf-8');
+
+    const entries: ToolRootEntry[] = [
+      {
+        toolName: 'cursor',
+        name: 'config.json',
+        source: 'hub',
+        domain: 'shared',
+        absolutePath: join(sourceDir, 'config.json'),
+        isFile: true,
+      },
+    ];
+
+    await reconcileToolRootEntries(tmpDir, config, entries);
+
+    // Update source and re-sync
+    await writeFile(join(sourceDir, 'config.json'), '{"v": 2}', 'utf-8');
+    const result = await reconcileToolRootEntries(tmpDir, config, entries);
+    expect(result.updated).toBe(1);
+
+    const content = await readFile(join(tmpDir, '.cursor', 'config.json'), 'utf-8');
+    expect(content).toBe('{"v": 2}');
   });
 });

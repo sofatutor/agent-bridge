@@ -8,6 +8,8 @@ import {
   detectDuplicates,
   scanRootFiles,
   detectRootFileDuplicates,
+  scanToolRootEntries,
+  detectToolRootDuplicates,
   featureMatchesTool,
   featureName,
 } from '../lib/manifest.js';
@@ -16,6 +18,7 @@ import {
   checkPathConflict,
   reconcileFeatures,
   syncRootFiles,
+  reconcileToolRootEntries,
 } from '../lib/sync.js';
 import { syncAllSources, removeStaleSourceDirs } from '../lib/sources.js';
 import { join } from 'node:path';
@@ -80,6 +83,7 @@ export async function syncCommand(cwd?: string, _opts?: unknown): Promise<void> 
   const featureTypes = await discoverFeatureTypes(repoRoot, config);
   const features = await scanFeatures(repoRoot, config, featureTypes);
   const rootFiles = await scanRootFiles(repoRoot, config);
+  const toolRootEntries = await scanToolRootEntries(repoRoot, config);
 
   const duplicates = detectDuplicates(features);
   if (duplicates.length > 0) {
@@ -103,7 +107,18 @@ export async function syncCommand(cwd?: string, _opts?: unknown): Promise<void> 
     process.exit(1);
   }
 
-  s.stop(`${features.length} features found${rootFiles.length > 0 ? `, ${rootFiles.length} root file(s)` : ''}`);
+  const toolRootDuplicates = detectToolRootDuplicates(toolRootEntries);
+  if (toolRootDuplicates.length > 0) {
+    s.stop('Duplicate tool root entries detected');
+    for (const dup of toolRootDuplicates) {
+      p.log.error(
+        `Duplicate "${dup.name}" for tool "${dup.toolName}": ${dup.paths.join(', ')}`
+      );
+    }
+    process.exit(1);
+  }
+
+  s.stop(`${features.length} features found${rootFiles.length > 0 ? `, ${rootFiles.length} root file(s)` : ''}${toolRootEntries.length > 0 ? `, ${toolRootEntries.length} tool root entr${toolRootEntries.length === 1 ? 'y' : 'ies'}` : ''}`);
 
   // --- Phase 3b: Detect path conflicts ---
   s.start('Checking for path conflicts…');
@@ -181,6 +196,36 @@ export async function syncCommand(cwd?: string, _opts?: unknown): Promise<void> 
       p.log.info(`Root file removed: ${name}`);
     }
   }
+
+  // --- Phase 6: Sync tool root entries ---
+  s.start('Syncing tool root entries…');
+
+  const toolRootResult = await reconcileToolRootEntries(
+    repoRoot,
+    config,
+    toolRootEntries
+  );
+
+  if (
+    toolRootResult.added > 0 ||
+    toolRootResult.updated > 0 ||
+    toolRootResult.removed > 0
+  ) {
+    p.log.info(
+      `Tool root: Added: ${toolRootResult.added}  Updated: ${toolRootResult.updated}  Removed: ${toolRootResult.removed}`
+    );
+  }
+
+  if (toolRootResult.errors.length > 0) {
+    for (const err of toolRootResult.errors) {
+      p.log.error(`${err.path}: ${err.error}`);
+    }
+    s.stop('Tool root entries synced with errors');
+    p.outro(`Sync completed with ${toolRootResult.errors.length} error(s).`);
+    process.exit(1);
+  }
+
+  s.stop('Tool root entries synced');
 
   p.outro('Sync complete.');
 }

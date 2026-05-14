@@ -93,7 +93,9 @@ export async function discoverFeatureTypes(
 
       const entries = await readdir(domainDir, { withFileTypes: true });
       for (const entry of entries) {
-        if (entry.isDirectory()) types.add(entry.name);
+        if (entry.isDirectory() && !parseToolRootName(entry.name)) {
+          types.add(entry.name);
+        }
       }
     }
   }
@@ -190,7 +192,7 @@ export function detectDuplicates(features: Feature[]): DuplicateConflict[] {
  * workspace root. When a source contains `<domain>/AGENTS.md` (etc.), Agent Bridge
  * copies it to the project root.
  */
-export const ROOT_FILES = ['AGENTS.md', 'CLAUDE.md'] as const;
+export const ROOT_FILES = ['AGENTS.md', 'CLAUDE.md', 'SYSTEM.md'] as const;
 export type RootFileName = (typeof ROOT_FILES)[number];
 
 export interface RootFile {
@@ -258,6 +260,126 @@ export function detectRootFileDuplicates(
       duplicates.push({
         fileName,
         paths: group.map((rf) => rf.absolutePath),
+      });
+    }
+  }
+
+  return duplicates;
+}
+
+// ---------------------------------------------------------------------------
+// Tool root folder scanning (_tool convention)
+// ---------------------------------------------------------------------------
+
+/**
+ * Prefix used to identify tool root folders in source repos.
+ * A folder named `_cursor` maps to the tool named "cursor" and its contents
+ * are synced directly into the tool's root folder (e.g. `.cursor/`).
+ */
+const TOOL_ROOT_PREFIX = '_';
+
+export interface ToolRootEntry {
+  /** The tool name this entry targets (e.g. "pi") */
+  toolName: string;
+  /** Name of the file or folder inside the _tool directory */
+  name: string;
+  /** Source that provides this entry */
+  source: string;
+  /** Domain where it was found */
+  domain: string;
+  /** Absolute path to the source file or folder */
+  absolutePath: string;
+  /** True if the entry is a single file, false if a directory */
+  isFile: boolean;
+}
+
+export interface ToolRootDuplicate {
+  /** The tool name */
+  toolName: string;
+  /** Name of the duplicate entry */
+  name: string;
+  /** Paths where the duplicates were found */
+  paths: string[];
+}
+
+/**
+ * Parse a `_tool` directory name. Returns the tool name if the directory
+ * matches the convention, otherwise undefined.
+ */
+export function parseToolRootName(name: string): string | undefined {
+  if (name.startsWith(TOOL_ROOT_PREFIX) && name.length > 1) {
+    return name.substring(TOOL_ROOT_PREFIX.length);
+  }
+  return undefined;
+}
+
+/**
+ * Scan all sources × domains for `_tool` directories and their contents.
+ * Each file/folder inside a `_tool` directory becomes a ToolRootEntry.
+ */
+export async function scanToolRootEntries(
+  repoRoot: string,
+  config: BridgeConfig
+): Promise<ToolRootEntry[]> {
+  const entries: ToolRootEntry[] = [];
+  const toolNames = new Set(config.tools.map((t) => t.name));
+
+  for (const source of config.sources) {
+    const srcPath = resolveSourcePath(repoRoot, source);
+    for (const domain of config.domains) {
+      const domainDir = join(srcPath, domain);
+      if (!(await dirExists(domainDir))) continue;
+
+      const domainEntries = await readdir(domainDir, { withFileTypes: true });
+      for (const dirEntry of domainEntries) {
+        if (!dirEntry.isDirectory()) continue;
+        const toolName = parseToolRootName(dirEntry.name);
+        if (!toolName || !toolNames.has(toolName)) continue;
+
+        const toolRootDir = join(domainDir, dirEntry.name);
+        const contents = await readdir(toolRootDir, { withFileTypes: true });
+        for (const item of contents) {
+          const isFile = item.isFile();
+          const isDir = item.isDirectory();
+          if (!isFile && !isDir) continue;
+
+          entries.push({
+            toolName,
+            name: item.name,
+            source: source.name,
+            domain,
+            absolutePath: join(toolRootDir, item.name),
+            isFile,
+          });
+        }
+      }
+    }
+  }
+
+  return entries;
+}
+
+/**
+ * Detect duplicate tool root entries (same tool + name from multiple sources/domains).
+ */
+export function detectToolRootDuplicates(
+  entries: ToolRootEntry[]
+): ToolRootDuplicate[] {
+  const byKey = new Map<string, ToolRootEntry[]>();
+  for (const entry of entries) {
+    const key = `${entry.toolName}/${entry.name}`;
+    const group = byKey.get(key) ?? [];
+    group.push(entry);
+    byKey.set(key, group);
+  }
+
+  const duplicates: ToolRootDuplicate[] = [];
+  for (const [, group] of byKey) {
+    if (group.length > 1) {
+      duplicates.push({
+        toolName: group[0].toolName,
+        name: group[0].name,
+        paths: group.map((e) => e.absolutePath),
       });
     }
   }

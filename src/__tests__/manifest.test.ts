@@ -11,6 +11,9 @@ import {
   detectDuplicates,
   scanRootFiles,
   detectRootFileDuplicates,
+  parseToolRootName,
+  scanToolRootEntries,
+  detectToolRootDuplicates,
   type Feature,
 } from '../lib/manifest.js';
 import type { BridgeConfig } from '../lib/config.js';
@@ -590,5 +593,299 @@ describe('detectRootFileDuplicates', () => {
 
   it('returns empty for empty input', () => {
     expect(detectRootFileDuplicates([])).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SYSTEM.md root file
+// ---------------------------------------------------------------------------
+
+describe('SYSTEM.md root file', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'manifest-system-'));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('finds SYSTEM.md in domain root', async () => {
+    const config = makeConfig({ _localSourcePath: tmpDir });
+    await buildSourceTree(tmpDir, {
+      'shared': ['SYSTEM.md'],
+    });
+
+    const rootFiles = await scanRootFiles(tmpDir, config);
+    expect(rootFiles).toHaveLength(1);
+    expect(rootFiles[0].fileName).toBe('SYSTEM.md');
+    expect(rootFiles[0].domain).toBe('shared');
+  });
+
+  it('finds SYSTEM.md alongside AGENTS.md and CLAUDE.md', async () => {
+    const config = makeConfig({ _localSourcePath: tmpDir });
+    await buildSourceTree(tmpDir, {
+      'shared': ['AGENTS.md', 'CLAUDE.md', 'SYSTEM.md'],
+    });
+
+    const rootFiles = await scanRootFiles(tmpDir, config);
+    expect(rootFiles).toHaveLength(3);
+    const names = rootFiles.map((r) => r.fileName).sort();
+    expect(names).toEqual(['AGENTS.md', 'CLAUDE.md', 'SYSTEM.md']);
+  });
+
+  it('detects duplicate SYSTEM.md across domains', () => {
+    const rootFiles = [
+      { fileName: 'SYSTEM.md' as const, source: 'hub', domain: 'shared', absolutePath: '/a' },
+      { fileName: 'SYSTEM.md' as const, source: 'hub', domain: 'backend', absolutePath: '/b' },
+    ];
+    const dups = detectRootFileDuplicates(rootFiles);
+    expect(dups).toHaveLength(1);
+    expect(dups[0].fileName).toBe('SYSTEM.md');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseToolRootName
+// ---------------------------------------------------------------------------
+
+describe('parseToolRootName', () => {
+  it('parses _cursor as "cursor"', () => {
+    expect(parseToolRootName('_cursor')).toBe('cursor');
+  });
+
+  it('parses _pi as "pi"', () => {
+    expect(parseToolRootName('_pi')).toBe('pi');
+  });
+
+  it('returns undefined for regular directory names', () => {
+    expect(parseToolRootName('skills')).toBeUndefined();
+    expect(parseToolRootName('agents')).toBeUndefined();
+  });
+
+  it('returns undefined for lone underscore', () => {
+    expect(parseToolRootName('_')).toBeUndefined();
+  });
+
+  it('parses multi-segment names', () => {
+    expect(parseToolRootName('_my-tool')).toBe('my-tool');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// discoverFeatureTypes excludes _tool dirs
+// ---------------------------------------------------------------------------
+
+describe('discoverFeatureTypes excludes _tool dirs', () => {
+  let tmpDir: string;
+  let sourceRoot: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'manifest-toolroot-'));
+    sourceRoot = tmpDir;
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('does not include _cursor in feature types', async () => {
+    await buildSourceTree(sourceRoot, {
+      'shared/skills/my-skill': ['SKILL.md'],
+      'shared/_cursor': ['settings.json'],
+    });
+
+    const config = makeConfig({ _localSourcePath: sourceRoot });
+    const types = await discoverFeatureTypes(tmpDir, config);
+    expect(types).toContain('skills');
+    expect(types).not.toContain('_cursor');
+  });
+
+  it('does not include any _tool dirs', async () => {
+    await buildSourceTree(sourceRoot, {
+      'shared/agents/my-agent': ['AGENT.md'],
+      'shared/_pi': ['config.json'],
+      'shared/_vscode': ['settings.json'],
+    });
+
+    const config = makeConfig({
+      _localSourcePath: sourceRoot,
+      tools: [
+        { name: 'vscode', folder: '.github' },
+        { name: 'cursor', folder: '.cursor' },
+        { name: 'pi', folder: '.pi' },
+      ],
+    });
+    const types = await discoverFeatureTypes(tmpDir, config);
+    expect(types).toEqual(['agents']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// scanToolRootEntries
+// ---------------------------------------------------------------------------
+
+describe('scanToolRootEntries', () => {
+  let tmpDir: string;
+  let sourceRoot: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'manifest-toolscan-'));
+    sourceRoot = tmpDir;
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('scans files inside _tool directories', async () => {
+    await buildSourceTree(sourceRoot, {
+      'shared/_cursor': ['settings.json'],
+    });
+
+    const config = makeConfig({ _localSourcePath: sourceRoot });
+    const entries = await scanToolRootEntries(tmpDir, config);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].toolName).toBe('cursor');
+    expect(entries[0].name).toBe('settings.json');
+    expect(entries[0].isFile).toBe(true);
+    expect(entries[0].source).toBe('hub');
+    expect(entries[0].domain).toBe('shared');
+  });
+
+  it('scans folders inside _tool directories', async () => {
+    await buildSourceTree(sourceRoot, {
+      'shared/_cursor/rules': ['review.md'],
+    });
+
+    const config = makeConfig({ _localSourcePath: sourceRoot });
+    const entries = await scanToolRootEntries(tmpDir, config);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].toolName).toBe('cursor');
+    expect(entries[0].name).toBe('rules');
+    expect(entries[0].isFile).toBe(false);
+  });
+
+  it('ignores _tool dirs for unconfigured tools', async () => {
+    await buildSourceTree(sourceRoot, {
+      'shared/_unknown': ['settings.json'],
+    });
+
+    const config = makeConfig({ _localSourcePath: sourceRoot });
+    const entries = await scanToolRootEntries(tmpDir, config);
+    expect(entries).toHaveLength(0);
+  });
+
+  it('scans across multiple domains', async () => {
+    await buildSourceTree(sourceRoot, {
+      'shared/_cursor': ['settings.json'],
+      'backend/_cursor': ['rules.md'],
+    });
+
+    const config = makeConfig({ _localSourcePath: sourceRoot });
+    const entries = await scanToolRootEntries(tmpDir, config);
+    expect(entries).toHaveLength(2);
+    const domains = entries.map((e) => e.domain).sort();
+    expect(domains).toEqual(['backend', 'shared']);
+  });
+
+  it('scans multiple _tool dirs for different tools', async () => {
+    await buildSourceTree(sourceRoot, {
+      'shared/_vscode': ['settings.json'],
+      'shared/_cursor': ['rules.md'],
+    });
+
+    const config = makeConfig({ _localSourcePath: sourceRoot });
+    const entries = await scanToolRootEntries(tmpDir, config);
+    expect(entries).toHaveLength(2);
+    const tools = entries.map((e) => e.toolName).sort();
+    expect(tools).toEqual(['cursor', 'vscode']);
+  });
+
+  it('returns empty when no _tool dirs exist', async () => {
+    await buildSourceTree(sourceRoot, {
+      'shared/skills/my-skill': ['SKILL.md'],
+    });
+
+    const config = makeConfig({ _localSourcePath: sourceRoot });
+    const entries = await scanToolRootEntries(tmpDir, config);
+    expect(entries).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// detectToolRootDuplicates
+// ---------------------------------------------------------------------------
+
+describe('detectToolRootDuplicates', () => {
+  it('detects same name for same tool from different sources', () => {
+    const entries = [
+      {
+        toolName: 'cursor',
+        name: 'settings.json',
+        source: 'hub',
+        domain: 'shared',
+        absolutePath: '/a/_cursor/settings.json',
+        isFile: true,
+      },
+      {
+        toolName: 'cursor',
+        name: 'settings.json',
+        source: 'extra',
+        domain: 'shared',
+        absolutePath: '/b/_cursor/settings.json',
+        isFile: true,
+      },
+    ];
+    const dups = detectToolRootDuplicates(entries);
+    expect(dups).toHaveLength(1);
+    expect(dups[0].toolName).toBe('cursor');
+    expect(dups[0].name).toBe('settings.json');
+    expect(dups[0].paths).toEqual([
+      '/a/_cursor/settings.json',
+      '/b/_cursor/settings.json',
+    ]);
+  });
+
+  it('allows same name for different tools', () => {
+    const entries = [
+      {
+        toolName: 'cursor',
+        name: 'settings.json',
+        source: 'hub',
+        domain: 'shared',
+        absolutePath: '/a/_cursor/settings.json',
+        isFile: true,
+      },
+      {
+        toolName: 'vscode',
+        name: 'settings.json',
+        source: 'hub',
+        domain: 'shared',
+        absolutePath: '/a/_vscode/settings.json',
+        isFile: true,
+      },
+    ];
+    const dups = detectToolRootDuplicates(entries);
+    expect(dups).toHaveLength(0);
+  });
+
+  it('returns empty for no duplicates', () => {
+    const entries = [
+      {
+        toolName: 'cursor',
+        name: 'settings.json',
+        source: 'hub',
+        domain: 'shared',
+        absolutePath: '/a',
+        isFile: true,
+      },
+    ];
+    expect(detectToolRootDuplicates(entries)).toHaveLength(0);
+  });
+
+  it('returns empty for empty input', () => {
+    expect(detectToolRootDuplicates([])).toHaveLength(0);
   });
 });

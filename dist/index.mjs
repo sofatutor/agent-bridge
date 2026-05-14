@@ -583,7 +583,7 @@ async function removeStaleSourceDirs(repoRoot, config) {
 }
 //#endregion
 //#region src/lib/version.ts
-const VERSION = "0.6.0";
+const VERSION = "0.7.0";
 //#endregion
 //#region src/commands/init.ts
 const WELL_KNOWN_TOOLS = [
@@ -931,6 +931,49 @@ function detectDuplicates(features) {
 	});
 	return conflicts;
 }
+/**
+* Well-known root files that live at the domain root and should be synced to the
+* workspace root. When a source contains `<domain>/AGENTS.md` (etc.), Agent Bridge
+* copies it to the project root.
+*/
+const ROOT_FILES = ["AGENTS.md", "CLAUDE.md"];
+/**
+* Scan all sources × domains for well-known root files.
+* Returns one entry per found file.
+*/
+async function scanRootFiles(repoRoot, config) {
+	const found = [];
+	for (const source of config.sources) {
+		const srcPath = resolveSourcePath(repoRoot, source);
+		for (const domain of config.domains) for (const fileName of ROOT_FILES) {
+			const filePath = join(srcPath, domain, fileName);
+			if (await fileExists(filePath)) found.push({
+				fileName,
+				source: source.name,
+				domain,
+				absolutePath: filePath
+			});
+		}
+	}
+	return found;
+}
+/**
+* Detect duplicate root files (same filename provided by multiple sources/domains).
+*/
+function detectRootFileDuplicates(rootFiles) {
+	const byName = /* @__PURE__ */ new Map();
+	for (const rf of rootFiles) {
+		const group = byName.get(rf.fileName) ?? [];
+		group.push(rf);
+		byName.set(rf.fileName, group);
+	}
+	const duplicates = [];
+	for (const [fileName, group] of byName) if (group.length > 1) duplicates.push({
+		fileName,
+		paths: group.map((rf) => rf.absolutePath)
+	});
+	return duplicates;
+}
 //#endregion
 //#region src/lib/sync.ts
 /**
@@ -1081,6 +1124,64 @@ async function reconcileFeatures(repoRoot, config, features) {
 		errors
 	};
 }
+const ROOT_FILE_MARKER = "<!-- Managed by Agent Bridge -->";
+/**
+* Check if a root file at `destPath` is managed by Agent Bridge.
+* A file is managed if it starts with the marker comment.
+*/
+async function isRootFileManaged(destPath) {
+	if (!await fileExists(destPath)) return false;
+	return (await readFile(destPath, "utf-8")).startsWith(ROOT_FILE_MARKER);
+}
+/**
+* Sync root files: copy source root files to the workspace root, and clean up
+* managed root files that are no longer provided by any source.
+*/
+async function syncRootFiles(repoRoot, rootFiles) {
+	const synced = [];
+	const removed = [];
+	const errors = [];
+	const expected = /* @__PURE__ */ new Map();
+	for (const rf of rootFiles) expected.set(rf.fileName, rf);
+	for (const [fileName, rf] of expected) {
+		const destPath = join(repoRoot, fileName);
+		try {
+			if (await fileExists(destPath)) {
+				if (!await isRootFileManaged(destPath)) continue;
+			}
+			const sourceContent = await readFile(rf.absolutePath, "utf-8");
+			const managedContent = ROOT_FILE_MARKER + "\n" + sourceContent;
+			await mkdir(dirname(destPath), { recursive: true });
+			await writeFile(destPath, managedContent, "utf-8");
+			synced.push(fileName);
+		} catch (err) {
+			errors.push({
+				path: destPath,
+				error: err instanceof Error ? err.message : String(err)
+			});
+		}
+	}
+	for (const fileName of ROOT_FILES) {
+		if (expected.has(fileName)) continue;
+		const destPath = join(repoRoot, fileName);
+		try {
+			if (await isRootFileManaged(destPath)) {
+				await removeFile(destPath);
+				removed.push(fileName);
+			}
+		} catch (err) {
+			errors.push({
+				path: destPath,
+				error: err instanceof Error ? err.message : String(err)
+			});
+		}
+	}
+	return {
+		synced,
+		removed,
+		errors
+	};
+}
 //#endregion
 //#region src/commands/sync.ts
 async function syncCommand(cwd, _opts) {
@@ -1106,13 +1207,20 @@ async function syncCommand(cwd, _opts) {
 	s.stop("Sources synced");
 	s.start("Discovering features…");
 	const features = await scanFeatures(repoRoot, config, await discoverFeatureTypes(repoRoot, config));
+	const rootFiles = await scanRootFiles(repoRoot, config);
 	const duplicates = detectDuplicates(features);
 	if (duplicates.length > 0) {
 		s.stop("Duplicate features detected");
 		for (const dup of duplicates) p.log.error(`Duplicate "${dup.name}" (${dup.type}): ${dup.paths.join(", ")}`);
 		process.exit(1);
 	}
-	s.stop(`${features.length} features found`);
+	const rootDuplicates = detectRootFileDuplicates(rootFiles);
+	if (rootDuplicates.length > 0) {
+		s.stop("Duplicate root files detected");
+		for (const dup of rootDuplicates) p.log.error(`Duplicate "${dup.fileName}": ${dup.paths.join(", ")}`);
+		process.exit(1);
+	}
+	s.stop(`${features.length} features found${rootFiles.length > 0 ? `, ${rootFiles.length} root file(s)` : ""}`);
 	s.start("Checking for path conflicts…");
 	const conflicts = [];
 	for (const tool of config.tools) for (const feature of features) {
@@ -1137,6 +1245,17 @@ async function syncCommand(cwd, _opts) {
 		for (const err of result.errors) p.log.error(`${err.path}: ${err.error}`);
 		p.outro(`Sync completed with ${result.errors.length} error(s).`);
 		process.exit(1);
+	}
+	if (rootFiles.length > 0) {
+		s.start("Syncing root files…");
+		const rootResult = await syncRootFiles(repoRoot, rootFiles);
+		for (const name of rootResult.synced) p.log.info(`Root file synced: ${name}`);
+		for (const name of rootResult.removed) p.log.info(`Root file removed: ${name}`);
+		for (const err of rootResult.errors) p.log.error(`${err.path}: ${err.error}`);
+		s.stop("Root files synced");
+	} else {
+		const rootResult = await syncRootFiles(repoRoot, []);
+		for (const name of rootResult.removed) p.log.info(`Root file removed: ${name}`);
 	}
 	p.outro("Sync complete.");
 }

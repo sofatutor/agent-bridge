@@ -40,6 +40,32 @@ Rules:
 3. Features **without** a prefix sync to **all** tools
 4. Works at both the feature type level and the feature level
 
+## Root Files
+
+Certain well-known files placed at the **domain root** (not inside a feature-type folder) are treated as **root files** and copied directly to the workspace root:
+
+| File        | Purpose                               |
+| ----------- | ------------------------------------- |
+| `AGENTS.md` | Always-on agent instructions (VS Code, Cursor) |
+| `CLAUDE.md` | Always-on instructions for Claude Code |
+
+Example source layout:
+
+```
+<source>/
+  shared/
+    AGENTS.md             ← root file → copied to <project>/AGENTS.md
+    CLAUDE.md             ← root file → copied to <project>/CLAUDE.md
+    skills/
+      foundation/
+        SKILL.md
+```
+
+Rules:
+1. Root files must be **unique** across all sources × domains. If two domains both provide `AGENTS.md`, sync halts with an error.
+2. A `<!-- Managed by Agent Bridge -->` marker is prepended when copied. Files without this marker are treated as user-created and **never** overwritten.
+3. When a root file is removed from the source, the managed copy at the workspace root is deleted automatically.
+
 ## Authoring Features
 
 Features live inside source repositories organized by domain and feature type:

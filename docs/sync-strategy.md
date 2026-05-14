@@ -20,6 +20,7 @@ After running `agent-bridge sync`, your project looks like:
 
 ```
 my-project/
+├── AGENTS.md                     # Root file (managed by Agent Bridge)
 ├── .agent-bridge/
 │   ├── config.yml                # Your configuration
 │   ├── .gitignore                # Ignores cloned source dirs
@@ -63,6 +64,38 @@ When features are removed from a source and you re-run `agent-bridge sync`:
 - Orphaned feature folders (those with a `.agentbridge` marker that are no longer expected) are detected and removed automatically.
 - Empty parent directories left behind (e.g. `.github/agents/` after all agents are removed) are cleaned up.
 - Real files and directories (those without a `.agentbridge` marker) are **never** deleted — only folders managed by Agent Bridge are touched.
+
+## Root Files
+
+Root files (`AGENTS.md`, `CLAUDE.md`) placed at the domain root in a source are
+copied directly to the workspace root during sync:
+
+```
+my-project/
+├── AGENTS.md                 ← Copied from source (managed by Agent Bridge)
+├── CLAUDE.md                 ← Copied from source (managed by Agent Bridge)
+├── .agent-bridge/
+│   └── config.yml
+├── .github/
+│   └── skills/
+│       └── foundation/
+│           ├── .agentbridge
+│           └── SKILL.md
+└── …
+```
+
+Managed root files are prefixed with a `<!-- Managed by Agent Bridge -->` marker
+on the first line. This marker serves the same purpose as the `.agentbridge`
+file does for feature folders:
+
+- **Re-sync safe** — managed root files are overwritten with the latest source
+  content on every sync.
+- **User file safety** — if a root file exists without the marker, it is treated
+  as user-created and never touched.
+- **Clean removal** — when a source no longer provides a root file, the managed
+  copy is deleted.
+- **Duplicate detection** — if the same root file is provided by multiple
+  sources or domains, sync aborts with an error.
 
 ## .gitignore
 

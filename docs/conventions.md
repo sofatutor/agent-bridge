@@ -48,6 +48,7 @@ Certain well-known files placed at the **domain root** (not inside a feature-typ
 | ----------- | ------------------------------------- |
 | `AGENTS.md` | Always-on agent instructions (VS Code, Cursor) |
 | `CLAUDE.md` | Always-on instructions for Claude Code |
+| `SYSTEM.md` | Custom system prompt for Pi            |
 
 Example source layout:
 
@@ -56,6 +57,7 @@ Example source layout:
   shared/
     AGENTS.md             ← root file → copied to <project>/AGENTS.md
     CLAUDE.md             ← root file → copied to <project>/CLAUDE.md
+    SYSTEM.md             ← root file → copied to <project>/SYSTEM.md
     skills/
       foundation/
         SKILL.md
@@ -65,6 +67,33 @@ Rules:
 1. Root files must be **unique** across all sources × domains. If two domains both provide `AGENTS.md`, sync halts with an error.
 2. A `<!-- Managed by Agent Bridge -->` marker is prepended when copied. Files without this marker are treated as user-created and **never** overwritten.
 3. When a root file is removed from the source, the managed copy at the workspace root is deleted automatically.
+
+## Tool Root Folders (`_tool` Convention)
+
+Directories named `_<toolname>` at the domain level are **tool root folders**. Their contents are synced directly into the tool's root folder (e.g. `.cursor/`, `.pi/`), bypassing the normal feature-type routing.
+
+This is useful for syncing arbitrary configuration files that a tool expects at specific paths inside its root directory.
+
+```
+<source>/
+  shared/
+    _cursor/
+      settings.json       ← synced to <project>/.cursor/settings.json
+      rules/              ← synced to <project>/.cursor/rules/
+        review.md
+    _pi/
+      config.json         ← synced to <project>/.pi/config.json
+    skills/
+      foundation/
+        SKILL.md
+```
+
+Rules:
+1. The tool name after `_` must match a configured tool name (e.g. `_cursor` matches `{ name: 'cursor', folder: '.cursor' }`).
+2. Unrecognized `_<name>` directories (where the name doesn't match any configured tool) are **ignored**.
+3. Each file or folder inside `_<toolname>/` is tracked in the tool root's `.agentbridge` manifest.
+4. Entries must be **unique** across all sources × domains for the same tool. Duplicates cause sync to halt with an error.
+5. `_<toolname>` directories are **excluded** from feature-type discovery — they are not treated as regular feature types.
 
 ## Authoring Features
 

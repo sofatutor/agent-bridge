@@ -6,6 +6,8 @@ import {
   discoverFeatureTypes,
   scanFeatures,
   detectDuplicates,
+  scanRootFiles,
+  detectRootFileDuplicates,
   featureMatchesTool,
   featureName,
 } from '../lib/manifest.js';
@@ -13,6 +15,7 @@ import {
   featureDestPath,
   checkPathConflict,
   reconcileFeatures,
+  syncRootFiles,
 } from '../lib/sync.js';
 import { syncAllSources, removeStaleSourceDirs } from '../lib/sources.js';
 import { join } from 'node:path';
@@ -76,6 +79,7 @@ export async function syncCommand(cwd?: string, _opts?: unknown): Promise<void> 
 
   const featureTypes = await discoverFeatureTypes(repoRoot, config);
   const features = await scanFeatures(repoRoot, config, featureTypes);
+  const rootFiles = await scanRootFiles(repoRoot, config);
 
   const duplicates = detectDuplicates(features);
   if (duplicates.length > 0) {
@@ -88,7 +92,18 @@ export async function syncCommand(cwd?: string, _opts?: unknown): Promise<void> 
     process.exit(1);
   }
 
-  s.stop(`${features.length} features found`);
+  const rootDuplicates = detectRootFileDuplicates(rootFiles);
+  if (rootDuplicates.length > 0) {
+    s.stop('Duplicate root files detected');
+    for (const dup of rootDuplicates) {
+      p.log.error(
+        `Duplicate "${dup.fileName}": ${dup.paths.join(', ')}`
+      );
+    }
+    process.exit(1);
+  }
+
+  s.stop(`${features.length} features found${rootFiles.length > 0 ? `, ${rootFiles.length} root file(s)` : ''}`);
 
   // --- Phase 3b: Detect path conflicts ---
   s.start('Checking for path conflicts…');
@@ -140,6 +155,31 @@ export async function syncCommand(cwd?: string, _opts?: unknown): Promise<void> 
     }
     p.outro(`Sync completed with ${result.errors.length} error(s).`);
     process.exit(1);
+  }
+
+  // --- Phase 5: Sync root files ---
+  if (rootFiles.length > 0) {
+    s.start('Syncing root files…');
+
+    const rootResult = await syncRootFiles(repoRoot, rootFiles);
+
+    for (const name of rootResult.synced) {
+      p.log.info(`Root file synced: ${name}`);
+    }
+    for (const name of rootResult.removed) {
+      p.log.info(`Root file removed: ${name}`);
+    }
+    for (const err of rootResult.errors) {
+      p.log.error(`${err.path}: ${err.error}`);
+    }
+
+    s.stop('Root files synced');
+  } else {
+    // Clean up any managed root files when no sources provide them
+    const rootResult = await syncRootFiles(repoRoot, []);
+    for (const name of rootResult.removed) {
+      p.log.info(`Root file removed: ${name}`);
+    }
   }
 
   p.outro('Sync complete.');

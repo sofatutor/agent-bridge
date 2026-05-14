@@ -1,4 +1,4 @@
-import { readdir, mkdir, rmdir, copyFile } from 'node:fs/promises';
+import { readdir, mkdir, rmdir, copyFile, readFile, writeFile } from 'node:fs/promises';
 import { join, dirname, basename } from 'node:path';
 import type { BridgeConfig } from './config.js';
 import {
@@ -17,6 +17,8 @@ import {
 } from './fs.js';
 import {
   type Feature,
+  type RootFile,
+  ROOT_FILES,
   featureMatchesTool,
   featureName,
 } from './manifest.js';
@@ -317,4 +319,88 @@ export async function reconcileFeatures(
   }
 
   return { added, updated, removed, errors };
+}
+
+// ---------------------------------------------------------------------------
+// Root file sync
+// ---------------------------------------------------------------------------
+
+const ROOT_FILE_MARKER = '<!-- Managed by Agent Bridge -->';
+
+/**
+ * Check if a root file at `destPath` is managed by Agent Bridge.
+ * A file is managed if it starts with the marker comment.
+ */
+export async function isRootFileManaged(destPath: string): Promise<boolean> {
+  if (!(await fileExists(destPath))) return false;
+  const content = await readFile(destPath, 'utf-8');
+  return content.startsWith(ROOT_FILE_MARKER);
+}
+
+export interface RootFileSyncResult {
+  synced: string[];
+  removed: string[];
+  errors: Array<{ path: string; error: string }>;
+}
+
+/**
+ * Sync root files: copy source root files to the workspace root, and clean up
+ * managed root files that are no longer provided by any source.
+ */
+export async function syncRootFiles(
+  repoRoot: string,
+  rootFiles: RootFile[]
+): Promise<RootFileSyncResult> {
+  const synced: string[] = [];
+  const removed: string[] = [];
+  const errors: Array<{ path: string; error: string }> = [];
+
+  // Build map: fileName → rootFile (already deduplicated by caller)
+  const expected = new Map<string, RootFile>();
+  for (const rf of rootFiles) {
+    expected.set(rf.fileName, rf);
+  }
+
+  // Sync expected root files
+  for (const [fileName, rf] of expected) {
+    const destPath = join(repoRoot, fileName);
+    try {
+      // If file exists and is NOT managed by us, skip (don't overwrite user files)
+      if (await fileExists(destPath)) {
+        if (!(await isRootFileManaged(destPath))) {
+          continue;
+        }
+      }
+
+      const sourceContent = await readFile(rf.absolutePath, 'utf-8');
+      const managedContent = ROOT_FILE_MARKER + '\n' + sourceContent;
+      await mkdir(dirname(destPath), { recursive: true });
+      await writeFile(destPath, managedContent, 'utf-8');
+      synced.push(fileName);
+    } catch (err) {
+      errors.push({
+        path: destPath,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // Remove managed root files no longer provided by any source
+  for (const fileName of ROOT_FILES) {
+    if (expected.has(fileName)) continue;
+    const destPath = join(repoRoot, fileName);
+    try {
+      if (await isRootFileManaged(destPath)) {
+        await removeFile(destPath);
+        removed.push(fileName);
+      }
+    } catch (err) {
+      errors.push({
+        path: destPath,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return { synced, removed, errors };
 }

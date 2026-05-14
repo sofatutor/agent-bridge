@@ -1,7 +1,7 @@
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { BridgeConfig, SourceConfig } from './config.js';
-import { dirExists } from './fs.js';
+import { dirExists, fileExists } from './fs.js';
 import { resolveSourcePath } from './sources.js';
 
 // ---------------------------------------------------------------------------
@@ -179,4 +179,88 @@ export function detectDuplicates(features: Feature[]): DuplicateConflict[] {
   }
 
   return conflicts;
+}
+
+// ---------------------------------------------------------------------------
+// Root file scanning
+// ---------------------------------------------------------------------------
+
+/**
+ * Well-known root files that live at the domain root and should be synced to the
+ * workspace root. When a source contains `<domain>/AGENTS.md` (etc.), Agent Bridge
+ * copies it to the project root.
+ */
+export const ROOT_FILES = ['AGENTS.md', 'CLAUDE.md'] as const;
+export type RootFileName = (typeof ROOT_FILES)[number];
+
+export interface RootFile {
+  /** The well-known filename (e.g. "AGENTS.md") */
+  fileName: RootFileName;
+  /** Source that provides this file */
+  source: string;
+  /** Domain where it was found */
+  domain: string;
+  /** Absolute path to the source file */
+  absolutePath: string;
+}
+
+export interface RootFileDuplicate {
+  fileName: RootFileName;
+  paths: string[];
+}
+
+/**
+ * Scan all sources × domains for well-known root files.
+ * Returns one entry per found file.
+ */
+export async function scanRootFiles(
+  repoRoot: string,
+  config: BridgeConfig
+): Promise<RootFile[]> {
+  const found: RootFile[] = [];
+
+  for (const source of config.sources) {
+    const srcPath = resolveSourcePath(repoRoot, source);
+    for (const domain of config.domains) {
+      for (const fileName of ROOT_FILES) {
+        const filePath = join(srcPath, domain, fileName);
+        if (await fileExists(filePath)) {
+          found.push({
+            fileName,
+            source: source.name,
+            domain,
+            absolutePath: filePath,
+          });
+        }
+      }
+    }
+  }
+
+  return found;
+}
+
+/**
+ * Detect duplicate root files (same filename provided by multiple sources/domains).
+ */
+export function detectRootFileDuplicates(
+  rootFiles: RootFile[]
+): RootFileDuplicate[] {
+  const byName = new Map<RootFileName, RootFile[]>();
+  for (const rf of rootFiles) {
+    const group = byName.get(rf.fileName) ?? [];
+    group.push(rf);
+    byName.set(rf.fileName, group);
+  }
+
+  const duplicates: RootFileDuplicate[] = [];
+  for (const [fileName, group] of byName) {
+    if (group.length > 1) {
+      duplicates.push({
+        fileName,
+        paths: group.map((rf) => rf.absolutePath),
+      });
+    }
+  }
+
+  return duplicates;
 }

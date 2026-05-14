@@ -9,10 +9,12 @@ import {
   syncFeature,
   removeEmptyParents,
   reconcileFeatures,
+  syncRootFiles,
+  isRootFileManaged,
 } from '../lib/sync.js';
 import { readManifest, MARKER_FILENAME } from '../lib/fs.js';
 import type { BridgeConfig } from '../lib/config.js';
-import type { Feature } from '../lib/manifest.js';
+import type { Feature, RootFile } from '../lib/manifest.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -548,5 +550,241 @@ describe('removeEmptyParents', () => {
     await removeEmptyParents(dir, stopAt);
 
     expect((await lstat(dir)).isDirectory()).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// syncRootFiles
+// ---------------------------------------------------------------------------
+
+describe('syncRootFiles', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'sync-rootfiles-'));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('copies AGENTS.md to workspace root with managed marker', async () => {
+    const sourceDir = join(tmpDir, 'source', 'shared');
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(join(sourceDir, 'AGENTS.md'), '# Agent instructions\n', 'utf-8');
+
+    const rootFiles: RootFile[] = [{
+      fileName: 'AGENTS.md',
+      source: 'hub',
+      domain: 'shared',
+      absolutePath: join(sourceDir, 'AGENTS.md'),
+    }];
+
+    const result = await syncRootFiles(tmpDir, rootFiles);
+    expect(result.synced).toEqual(['AGENTS.md']);
+    expect(result.removed).toEqual([]);
+    expect(result.errors).toEqual([]);
+
+    const content = await readFile(join(tmpDir, 'AGENTS.md'), 'utf-8');
+    expect(content).toContain('<!-- Managed by Agent Bridge -->');
+    expect(content).toContain('# Agent instructions');
+  });
+
+  it('does not overwrite user-created root file (no marker)', async () => {
+    // User created their own AGENTS.md
+    await writeFile(join(tmpDir, 'AGENTS.md'), '# My custom agents\n', 'utf-8');
+
+    const sourceDir = join(tmpDir, 'source', 'shared');
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(join(sourceDir, 'AGENTS.md'), '# From source\n', 'utf-8');
+
+    const rootFiles: RootFile[] = [{
+      fileName: 'AGENTS.md',
+      source: 'hub',
+      domain: 'shared',
+      absolutePath: join(sourceDir, 'AGENTS.md'),
+    }];
+
+    const result = await syncRootFiles(tmpDir, rootFiles);
+    expect(result.synced).toEqual([]);
+
+    // User file should be untouched
+    const content = await readFile(join(tmpDir, 'AGENTS.md'), 'utf-8');
+    expect(content).toBe('# My custom agents\n');
+  });
+
+  it('updates a managed root file', async () => {
+    // Existing managed file
+    await writeFile(join(tmpDir, 'AGENTS.md'), '<!-- Managed by Agent Bridge -->\n# Old content\n', 'utf-8');
+
+    const sourceDir = join(tmpDir, 'source', 'shared');
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(join(sourceDir, 'AGENTS.md'), '# New content\n', 'utf-8');
+
+    const rootFiles: RootFile[] = [{
+      fileName: 'AGENTS.md',
+      source: 'hub',
+      domain: 'shared',
+      absolutePath: join(sourceDir, 'AGENTS.md'),
+    }];
+
+    const result = await syncRootFiles(tmpDir, rootFiles);
+    expect(result.synced).toEqual(['AGENTS.md']);
+
+    const content = await readFile(join(tmpDir, 'AGENTS.md'), 'utf-8');
+    expect(content).toContain('# New content');
+    expect(content).not.toContain('# Old content');
+  });
+
+  it('removes managed root files no longer in sources', async () => {
+    // Existing managed file with no corresponding source
+    await writeFile(join(tmpDir, 'AGENTS.md'), '<!-- Managed by Agent Bridge -->\n# Old\n', 'utf-8');
+
+    const result = await syncRootFiles(tmpDir, []);
+    expect(result.removed).toEqual(['AGENTS.md']);
+
+    let exists = true;
+    try { await access(join(tmpDir, 'AGENTS.md')); } catch { exists = false; }
+    expect(exists).toBe(false);
+  });
+
+  it('does not remove user-created root files when sources are empty', async () => {
+    await writeFile(join(tmpDir, 'AGENTS.md'), '# My custom agents\n', 'utf-8');
+
+    const result = await syncRootFiles(tmpDir, []);
+    expect(result.removed).toEqual([]);
+
+    const content = await readFile(join(tmpDir, 'AGENTS.md'), 'utf-8');
+    expect(content).toBe('# My custom agents\n');
+  });
+
+  it('syncs multiple root files simultaneously', async () => {
+    const sourceDir = join(tmpDir, 'source', 'shared');
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(join(sourceDir, 'AGENTS.md'), '# Agents\n', 'utf-8');
+    await writeFile(join(sourceDir, 'CLAUDE.md'), '# Claude\n', 'utf-8');
+
+    const rootFiles: RootFile[] = [
+      {
+        fileName: 'AGENTS.md',
+        source: 'hub',
+        domain: 'shared',
+        absolutePath: join(sourceDir, 'AGENTS.md'),
+      },
+      {
+        fileName: 'CLAUDE.md',
+        source: 'hub',
+        domain: 'shared',
+        absolutePath: join(sourceDir, 'CLAUDE.md'),
+      },
+    ];
+
+    const result = await syncRootFiles(tmpDir, rootFiles);
+    expect(result.synced.sort()).toEqual(['AGENTS.md', 'CLAUDE.md']);
+    expect(result.errors).toEqual([]);
+
+    const agentsContent = await readFile(join(tmpDir, 'AGENTS.md'), 'utf-8');
+    expect(agentsContent).toContain('<!-- Managed by Agent Bridge -->');
+    expect(agentsContent).toContain('# Agents');
+
+    const claudeContent = await readFile(join(tmpDir, 'CLAUDE.md'), 'utf-8');
+    expect(claudeContent).toContain('<!-- Managed by Agent Bridge -->');
+    expect(claudeContent).toContain('# Claude');
+  });
+
+  it('skips user file and syncs managed file in mixed scenario', async () => {
+    // User-created AGENTS.md
+    await writeFile(join(tmpDir, 'AGENTS.md'), '# My custom agents\n', 'utf-8');
+
+    const sourceDir = join(tmpDir, 'source', 'shared');
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(join(sourceDir, 'AGENTS.md'), '# From source agents\n', 'utf-8');
+    await writeFile(join(sourceDir, 'CLAUDE.md'), '# From source claude\n', 'utf-8');
+
+    const rootFiles: RootFile[] = [
+      {
+        fileName: 'AGENTS.md',
+        source: 'hub',
+        domain: 'shared',
+        absolutePath: join(sourceDir, 'AGENTS.md'),
+      },
+      {
+        fileName: 'CLAUDE.md',
+        source: 'hub',
+        domain: 'shared',
+        absolutePath: join(sourceDir, 'CLAUDE.md'),
+      },
+    ];
+
+    const result = await syncRootFiles(tmpDir, rootFiles);
+    // AGENTS.md is user-created so skipped; CLAUDE.md is new so synced
+    expect(result.synced).toEqual(['CLAUDE.md']);
+
+    // User file untouched
+    const agentsContent = await readFile(join(tmpDir, 'AGENTS.md'), 'utf-8');
+    expect(agentsContent).toBe('# My custom agents\n');
+
+    // CLAUDE.md synced with marker
+    const claudeContent = await readFile(join(tmpDir, 'CLAUDE.md'), 'utf-8');
+    expect(claudeContent).toContain('<!-- Managed by Agent Bridge -->');
+  });
+
+  it('removes only managed files when multiple root files exist', async () => {
+    // Managed AGENTS.md
+    await writeFile(join(tmpDir, 'AGENTS.md'), '<!-- Managed by Agent Bridge -->\n# Old agents\n', 'utf-8');
+    // User-created CLAUDE.md
+    await writeFile(join(tmpDir, 'CLAUDE.md'), '# My Claude\n', 'utf-8');
+
+    const result = await syncRootFiles(tmpDir, []);
+    expect(result.removed).toEqual(['AGENTS.md']);
+
+    // AGENTS.md should be deleted
+    let agentsExists = true;
+    try { await access(join(tmpDir, 'AGENTS.md')); } catch { agentsExists = false; }
+    expect(agentsExists).toBe(false);
+
+    // User CLAUDE.md preserved
+    const claudeContent = await readFile(join(tmpDir, 'CLAUDE.md'), 'utf-8');
+    expect(claudeContent).toBe('# My Claude\n');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isRootFileManaged
+// ---------------------------------------------------------------------------
+
+describe('isRootFileManaged', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'managed-rootfile-'));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('returns true for a file with the managed marker', async () => {
+    await writeFile(join(tmpDir, 'AGENTS.md'), '<!-- Managed by Agent Bridge -->\n# Content', 'utf-8');
+    expect(await isRootFileManaged(join(tmpDir, 'AGENTS.md'))).toBe(true);
+  });
+
+  it('returns false for a user-created file', async () => {
+    await writeFile(join(tmpDir, 'AGENTS.md'), '# My instructions', 'utf-8');
+    expect(await isRootFileManaged(join(tmpDir, 'AGENTS.md'))).toBe(false);
+  });
+
+  it('returns false for a non-existent file', async () => {
+    expect(await isRootFileManaged(join(tmpDir, 'AGENTS.md'))).toBe(false);
+  });
+
+  it('returns false when marker is not on the first line', async () => {
+    await writeFile(join(tmpDir, 'AGENTS.md'), '# Content\n<!-- Managed by Agent Bridge -->\n', 'utf-8');
+    expect(await isRootFileManaged(join(tmpDir, 'AGENTS.md'))).toBe(false);
+  });
+
+  it('returns true for marker-only file', async () => {
+    await writeFile(join(tmpDir, 'AGENTS.md'), '<!-- Managed by Agent Bridge -->', 'utf-8');
+    expect(await isRootFileManaged(join(tmpDir, 'AGENTS.md'))).toBe(true);
   });
 });

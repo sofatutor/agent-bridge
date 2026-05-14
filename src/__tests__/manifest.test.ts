@@ -9,6 +9,8 @@ import {
   discoverFeatureTypes,
   scanFeatures,
   detectDuplicates,
+  scanRootFiles,
+  detectRootFileDuplicates,
   type Feature,
 } from '../lib/manifest.js';
 import type { BridgeConfig } from '../lib/config.js';
@@ -400,5 +402,193 @@ describe('detectDuplicates', () => {
     const dups = detectDuplicates(features);
     expect(dups).toHaveLength(1);
     expect(dups[0].name).toBe('code-review');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// scanRootFiles
+// ---------------------------------------------------------------------------
+
+describe('scanRootFiles', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'manifest-rootfiles-'));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('finds AGENTS.md in domain root', async () => {
+    const config = makeConfig({ _localSourcePath: tmpDir });
+    await buildSourceTree(tmpDir, {
+      'shared': ['AGENTS.md'],
+    });
+
+    const rootFiles = await scanRootFiles(tmpDir, config);
+    expect(rootFiles).toHaveLength(1);
+    expect(rootFiles[0].fileName).toBe('AGENTS.md');
+    expect(rootFiles[0].domain).toBe('shared');
+    expect(rootFiles[0].source).toBe('hub');
+  });
+
+  it('finds CLAUDE.md in domain root', async () => {
+    const config = makeConfig({ _localSourcePath: tmpDir });
+    await buildSourceTree(tmpDir, {
+      'shared': ['CLAUDE.md'],
+    });
+
+    const rootFiles = await scanRootFiles(tmpDir, config);
+    expect(rootFiles).toHaveLength(1);
+    expect(rootFiles[0].fileName).toBe('CLAUDE.md');
+  });
+
+  it('finds both AGENTS.md and CLAUDE.md', async () => {
+    const config = makeConfig({ _localSourcePath: tmpDir });
+    await buildSourceTree(tmpDir, {
+      'shared': ['AGENTS.md', 'CLAUDE.md'],
+    });
+
+    const rootFiles = await scanRootFiles(tmpDir, config);
+    expect(rootFiles).toHaveLength(2);
+    const names = rootFiles.map((r) => r.fileName).sort();
+    expect(names).toEqual(['AGENTS.md', 'CLAUDE.md']);
+  });
+
+  it('returns empty for domains without root files', async () => {
+    const config = makeConfig({ _localSourcePath: tmpDir });
+    await buildSourceTree(tmpDir, {
+      'shared/skills/my-skill': ['README.md'],
+    });
+
+    const rootFiles = await scanRootFiles(tmpDir, config);
+    expect(rootFiles).toHaveLength(0);
+  });
+
+  it('only scans configured domains', async () => {
+    const config = makeConfig({
+      _localSourcePath: tmpDir,
+      domains: ['shared'],
+    });
+    await buildSourceTree(tmpDir, {
+      'shared': ['AGENTS.md'],
+      'backend': ['AGENTS.md'],
+    });
+
+    const rootFiles = await scanRootFiles(tmpDir, config);
+    expect(rootFiles).toHaveLength(1);
+    expect(rootFiles[0].domain).toBe('shared');
+  });
+
+  it('ignores non-root-file .md files', async () => {
+    const config = makeConfig({ _localSourcePath: tmpDir });
+    await buildSourceTree(tmpDir, {
+      'shared': ['README.md', 'AGENTS.md'],
+    });
+
+    const rootFiles = await scanRootFiles(tmpDir, config);
+    expect(rootFiles).toHaveLength(1);
+    expect(rootFiles[0].fileName).toBe('AGENTS.md');
+  });
+
+  it('scans root files across multiple sources', async () => {
+    const source2 = join(tmpDir, 'extra');
+    await buildSourceTree(tmpDir, {
+      'shared': ['AGENTS.md'],
+    });
+    await buildSourceTree(source2, {
+      'shared': ['CLAUDE.md'],
+    });
+
+    const config: BridgeConfig = {
+      domains: ['shared'],
+      tools: [{ name: 'vscode', folder: '.github' }],
+      sources: [
+        { name: 'hub', source: tmpDir },
+        { name: 'extra', source: source2 },
+      ],
+    };
+
+    const rootFiles = await scanRootFiles(tmpDir, config);
+    expect(rootFiles).toHaveLength(2);
+    const names = rootFiles.map((r) => r.fileName).sort();
+    expect(names).toEqual(['AGENTS.md', 'CLAUDE.md']);
+    expect(rootFiles.find((r) => r.fileName === 'AGENTS.md')!.source).toBe('hub');
+    expect(rootFiles.find((r) => r.fileName === 'CLAUDE.md')!.source).toBe('extra');
+  });
+
+  it('scans root files across multiple domains', async () => {
+    const config = makeConfig({ _localSourcePath: tmpDir });
+    await buildSourceTree(tmpDir, {
+      'shared': ['AGENTS.md'],
+      'backend': ['CLAUDE.md'],
+    });
+
+    const rootFiles = await scanRootFiles(tmpDir, config);
+    expect(rootFiles).toHaveLength(2);
+
+    const agents = rootFiles.find((r) => r.fileName === 'AGENTS.md')!;
+    expect(agents.domain).toBe('shared');
+
+    const claude = rootFiles.find((r) => r.fileName === 'CLAUDE.md')!;
+    expect(claude.domain).toBe('backend');
+  });
+
+  it('returns correct absolutePath for root files', async () => {
+    const config = makeConfig({ _localSourcePath: tmpDir });
+    await buildSourceTree(tmpDir, {
+      'shared': ['AGENTS.md'],
+    });
+
+    const rootFiles = await scanRootFiles(tmpDir, config);
+    expect(rootFiles[0].absolutePath).toBe(join(tmpDir, 'shared', 'AGENTS.md'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// detectRootFileDuplicates
+// ---------------------------------------------------------------------------
+
+describe('detectRootFileDuplicates', () => {
+  it('detects same root file from multiple domains', () => {
+    const rootFiles = [
+      { fileName: 'AGENTS.md' as const, source: 'hub', domain: 'shared', absolutePath: '/a' },
+      { fileName: 'AGENTS.md' as const, source: 'hub', domain: 'backend', absolutePath: '/b' },
+    ];
+    const dups = detectRootFileDuplicates(rootFiles);
+    expect(dups).toHaveLength(1);
+    expect(dups[0].fileName).toBe('AGENTS.md');
+    expect(dups[0].paths).toEqual(['/a', '/b']);
+  });
+
+  it('allows different root files from same domain', () => {
+    const rootFiles = [
+      { fileName: 'AGENTS.md' as const, source: 'hub', domain: 'shared', absolutePath: '/a' },
+      { fileName: 'CLAUDE.md' as const, source: 'hub', domain: 'shared', absolutePath: '/b' },
+    ];
+    const dups = detectRootFileDuplicates(rootFiles);
+    expect(dups).toHaveLength(0);
+  });
+
+  it('returns empty for no duplicates', () => {
+    const rootFiles = [
+      { fileName: 'AGENTS.md' as const, source: 'hub', domain: 'shared', absolutePath: '/a' },
+    ];
+    expect(detectRootFileDuplicates(rootFiles)).toHaveLength(0);
+  });
+
+  it('detects same root file from multiple sources', () => {
+    const rootFiles = [
+      { fileName: 'AGENTS.md' as const, source: 'hub', domain: 'shared', absolutePath: '/a' },
+      { fileName: 'AGENTS.md' as const, source: 'extra', domain: 'shared', absolutePath: '/b' },
+    ];
+    const dups = detectRootFileDuplicates(rootFiles);
+    expect(dups).toHaveLength(1);
+    expect(dups[0].fileName).toBe('AGENTS.md');
+  });
+
+  it('returns empty for empty input', () => {
+    expect(detectRootFileDuplicates([])).toHaveLength(0);
   });
 });

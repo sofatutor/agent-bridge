@@ -68,32 +68,28 @@ Rules:
 2. A `<!-- Managed by Agent Bridge -->` marker is prepended when copied. Files without this marker are treated as user-created and **never** overwritten.
 3. When a root file is removed from the source, the managed copy at the workspace root is deleted automatically.
 
-## Tool Root Folders (`_tool` Convention)
+## Tool Root Files (Tool-Prefixed Flat Files)
 
-Directories named `_<toolname>` at the domain level are **tool root folders**. Their contents are synced directly into the tool's root folder (e.g. `.cursor/`, `.pi/`), bypassing the normal feature-type routing.
+Flat files at the domain level with a `<toolname>--` prefix are **tool root files**. They are synced directly into the tool's root folder (e.g. `.cursor/`, `.pi/`), bypassing the normal feature-type routing.
 
-This is useful for syncing arbitrary configuration files that a tool expects at specific paths inside its root directory.
+This reuses the existing `--` prefix convention and is useful for syncing arbitrary configuration files that a tool expects at specific paths inside its root directory.
 
 ```
 <source>/
   shared/
-    _cursor/
-      settings.json       ← synced to <project>/.cursor/settings.json
-      rules/              ← synced to <project>/.cursor/rules/
-        review.md
-    _pi/
-      config.json         ← synced to <project>/.pi/config.json
+    cursor--settings.json   ← synced to <project>/.cursor/settings.json
+    pi--config.json         ← synced to <project>/.pi/config.json
     skills/
       foundation/
         SKILL.md
 ```
 
 Rules:
-1. The tool name after `_` must match a configured tool name (e.g. `_cursor` matches `{ name: 'cursor', folder: '.cursor' }`).
-2. Unrecognized `_<name>` directories (where the name doesn't match any configured tool) are **ignored**.
-3. Each file or folder inside `_<toolname>/` is tracked in the tool root's `.agentbridge` manifest.
+1. The tool name before `--` must match a configured tool name (e.g. `cursor--settings.json` matches `{ name: 'cursor', folder: '.cursor' }`).
+2. Files with an unrecognized tool prefix (where the name doesn't match any configured tool) are **ignored**.
+3. Each tool root file is tracked in the tool root's `.agentbridge` manifest.
 4. Entries must be **unique** across all sources × domains for the same tool. Duplicates cause sync to halt with an error.
-5. `_<toolname>` directories are **excluded** from feature-type discovery — they are not treated as regular feature types.
+5. Only flat files are supported — directories with a tool prefix at the domain level are treated as regular feature types.
 
 ## Authoring Features
 

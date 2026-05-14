@@ -49,8 +49,8 @@ my-project/
 │   │   └── my-rule/
 │   │       ├── .agentbridge
 │   │       └── instructions.md
-│   ├── .agentbridge              # Manifest for tool root entries
-│   └── settings.json             # From _cursor/settings.json
+│   ├─ .agentbridge              # Manifest for tool root files
+│   └─ settings.json             # From cursor--settings.json
 │
 └── .claude/                      # Claude
     └── skills/
@@ -99,19 +99,19 @@ file does for feature folders:
 - **Duplicate detection** — if the same root file is provided by multiple
   sources or domains, sync aborts with an error.
 
-## Tool Root Entries
+## Tool Root Files
 
-Tool root entries (from `_<toolname>` directories) are synced directly into
-the tool's root folder. They are tracked in the `.agentbridge` manifest file
-at the tool root level (e.g. `.cursor/.agentbridge`):
+Tool root files (flat files with a `<toolname>--` prefix at the domain level)
+are synced directly into the tool's root folder. They are tracked in the
+`.agentbridge` manifest file at the tool root level (e.g. `.cursor/.agentbridge`):
 
-- **Re-sync safe** — entries tracked in the manifest are updated in place on
+- **Re-sync safe** — files tracked in the manifest are updated in place on
   subsequent syncs.
-- **Conflict detection** — if the same entry name is provided for the same tool
-  by multiple sources or domains, sync aborts with an error.
-- **Clean removal** — when entries are removed from the source, managed entries
+- **Conflict detection** — if the same destination filename is provided for the
+  same tool by multiple sources or domains, sync aborts with an error.
+- **Clean removal** — when files are removed from the source, managed files
   (those in the manifest) are deleted.
-- **Coexistence** — tool root entries share the `.agentbridge` manifest with
+- **Coexistence** — tool root files share the `.agentbridge` manifest with
   regular features synced to the same tool folder.
 
 ## .gitignore

@@ -829,7 +829,6 @@ describe('reconcileToolRootEntries', () => {
         source: 'hub',
         domain: 'shared',
         absolutePath: join(sourceDir, 'settings.json'),
-        isFile: true,
       },
     ];
 
@@ -844,38 +843,6 @@ describe('reconcileToolRootEntries', () => {
     // Verify manifest entry
     const manifest = await readManifest(join(tmpDir, '.cursor'));
     expect(manifest).toContain('settings.json');
-  });
-
-  it('syncs a folder entry to the tool root directory', async () => {
-    const config = makeToolConfig();
-
-    // Create source folder
-    const sourceDir = join(tmpDir, 'source', 'rules');
-    await mkdir(sourceDir, { recursive: true });
-    await writeFile(join(sourceDir, 'review.md'), '# Review rules', 'utf-8');
-
-    const entries: ToolRootEntry[] = [
-      {
-        toolName: 'cursor',
-        name: 'rules',
-        source: 'hub',
-        domain: 'shared',
-        absolutePath: join(tmpDir, 'source', 'rules'),
-        isFile: false,
-      },
-    ];
-
-    const result = await reconcileToolRootEntries(tmpDir, config, entries);
-    expect(result.added).toBe(1);
-    expect(result.errors).toHaveLength(0);
-
-    // Verify folder was synced
-    const destContent = await readFile(join(tmpDir, '.cursor', 'rules', 'review.md'), 'utf-8');
-    expect(destContent).toBe('# Review rules');
-
-    // Verify manifest entry (folders have trailing /)
-    const manifest = await readManifest(join(tmpDir, '.cursor'));
-    expect(manifest).toContain('rules/');
   });
 
   it('removes orphaned entries not in expected list', async () => {
@@ -912,7 +879,6 @@ describe('reconcileToolRootEntries', () => {
         source: 'hub',
         domain: 'shared',
         absolutePath: join(sourceDir, 'cursor.json'),
-        isFile: true,
       },
       {
         toolName: 'vscode',
@@ -920,7 +886,6 @@ describe('reconcileToolRootEntries', () => {
         source: 'hub',
         domain: 'shared',
         absolutePath: join(sourceDir, 'vscode.json'),
-        isFile: true,
       },
     ];
 
@@ -949,7 +914,6 @@ describe('reconcileToolRootEntries', () => {
         source: 'hub',
         domain: 'shared',
         absolutePath: join(sourceDir, 'config.json'),
-        isFile: true,
       },
     ];
 

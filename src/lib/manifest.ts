@@ -93,7 +93,7 @@ export async function discoverFeatureTypes(
 
       const entries = await readdir(domainDir, { withFileTypes: true });
       for (const entry of entries) {
-        if (entry.isDirectory() && !parseToolRootName(entry.name)) {
+        if (entry.isDirectory()) {
           types.add(entry.name);
         }
       }
@@ -268,29 +268,20 @@ export function detectRootFileDuplicates(
 }
 
 // ---------------------------------------------------------------------------
-// Tool root folder scanning (_tool convention)
+// Tool root file scanning (tool-prefixed flat files at domain level)
 // ---------------------------------------------------------------------------
-
-/**
- * Prefix used to identify tool root folders in source repos.
- * A folder named `_cursor` maps to the tool named "cursor" and its contents
- * are synced directly into the tool's root folder (e.g. `.cursor/`).
- */
-const TOOL_ROOT_PREFIX = '_';
 
 export interface ToolRootEntry {
   /** The tool name this entry targets (e.g. "pi") */
   toolName: string;
-  /** Name of the file or folder inside the _tool directory */
+  /** Destination filename (e.g. "settings.json" from "cursor--settings.json") */
   name: string;
   /** Source that provides this entry */
   source: string;
   /** Domain where it was found */
   domain: string;
-  /** Absolute path to the source file or folder */
+  /** Absolute path to the source file */
   absolutePath: string;
-  /** True if the entry is a single file, false if a directory */
-  isFile: boolean;
 }
 
 export interface ToolRootDuplicate {
@@ -303,19 +294,9 @@ export interface ToolRootDuplicate {
 }
 
 /**
- * Parse a `_tool` directory name. Returns the tool name if the directory
- * matches the convention, otherwise undefined.
- */
-export function parseToolRootName(name: string): string | undefined {
-  if (name.startsWith(TOOL_ROOT_PREFIX) && name.length > 1) {
-    return name.substring(TOOL_ROOT_PREFIX.length);
-  }
-  return undefined;
-}
-
-/**
- * Scan all sources × domains for `_tool` directories and their contents.
- * Each file/folder inside a `_tool` directory becomes a ToolRootEntry.
+ * Scan all sources × domains for tool-prefixed flat files at the domain level.
+ * A file named `cursor--settings.json` targets the tool "cursor" with
+ * destination filename "settings.json".
  */
 export async function scanToolRootEntries(
   repoRoot: string,
@@ -331,27 +312,19 @@ export async function scanToolRootEntries(
       if (!(await dirExists(domainDir))) continue;
 
       const domainEntries = await readdir(domainDir, { withFileTypes: true });
-      for (const dirEntry of domainEntries) {
-        if (!dirEntry.isDirectory()) continue;
-        const toolName = parseToolRootName(dirEntry.name);
-        if (!toolName || !toolNames.has(toolName)) continue;
+      for (const entry of domainEntries) {
+        if (!entry.isFile()) continue;
 
-        const toolRootDir = join(domainDir, dirEntry.name);
-        const contents = await readdir(toolRootDir, { withFileTypes: true });
-        for (const item of contents) {
-          const isFile = item.isFile();
-          const isDir = item.isDirectory();
-          if (!isFile && !isDir) continue;
+        const { toolPrefix, baseName } = parseToolPrefix(entry.name);
+        if (!toolPrefix || !toolNames.has(toolPrefix)) continue;
 
-          entries.push({
-            toolName,
-            name: item.name,
-            source: source.name,
-            domain,
-            absolutePath: join(toolRootDir, item.name),
-            isFile,
-          });
-        }
+        entries.push({
+          toolName: toolPrefix,
+          name: baseName,
+          source: source.name,
+          domain,
+          absolutePath: join(domainDir, entry.name),
+        });
       }
     }
   }

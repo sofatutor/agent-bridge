@@ -11,7 +11,6 @@ import {
   detectDuplicates,
   scanRootFiles,
   detectRootFileDuplicates,
-  parseToolRootName,
   scanToolRootEntries,
   detectToolRootDuplicates,
   type Feature,
@@ -647,83 +646,7 @@ describe('SYSTEM.md root file', () => {
 });
 
 // ---------------------------------------------------------------------------
-// parseToolRootName
-// ---------------------------------------------------------------------------
-
-describe('parseToolRootName', () => {
-  it('parses _cursor as "cursor"', () => {
-    expect(parseToolRootName('_cursor')).toBe('cursor');
-  });
-
-  it('parses _pi as "pi"', () => {
-    expect(parseToolRootName('_pi')).toBe('pi');
-  });
-
-  it('returns undefined for regular directory names', () => {
-    expect(parseToolRootName('skills')).toBeUndefined();
-    expect(parseToolRootName('agents')).toBeUndefined();
-  });
-
-  it('returns undefined for lone underscore', () => {
-    expect(parseToolRootName('_')).toBeUndefined();
-  });
-
-  it('parses multi-segment names', () => {
-    expect(parseToolRootName('_my-tool')).toBe('my-tool');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// discoverFeatureTypes excludes _tool dirs
-// ---------------------------------------------------------------------------
-
-describe('discoverFeatureTypes excludes _tool dirs', () => {
-  let tmpDir: string;
-  let sourceRoot: string;
-
-  beforeEach(async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), 'manifest-toolroot-'));
-    sourceRoot = tmpDir;
-  });
-
-  afterEach(async () => {
-    await rm(tmpDir, { recursive: true, force: true });
-  });
-
-  it('does not include _cursor in feature types', async () => {
-    await buildSourceTree(sourceRoot, {
-      'shared/skills/my-skill': ['SKILL.md'],
-      'shared/_cursor': ['settings.json'],
-    });
-
-    const config = makeConfig({ _localSourcePath: sourceRoot });
-    const types = await discoverFeatureTypes(tmpDir, config);
-    expect(types).toContain('skills');
-    expect(types).not.toContain('_cursor');
-  });
-
-  it('does not include any _tool dirs', async () => {
-    await buildSourceTree(sourceRoot, {
-      'shared/agents/my-agent': ['AGENT.md'],
-      'shared/_pi': ['config.json'],
-      'shared/_vscode': ['settings.json'],
-    });
-
-    const config = makeConfig({
-      _localSourcePath: sourceRoot,
-      tools: [
-        { name: 'vscode', folder: '.github' },
-        { name: 'cursor', folder: '.cursor' },
-        { name: 'pi', folder: '.pi' },
-      ],
-    });
-    const types = await discoverFeatureTypes(tmpDir, config);
-    expect(types).toEqual(['agents']);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// scanToolRootEntries
+// scanToolRootEntries (tool-prefixed flat files)
 // ---------------------------------------------------------------------------
 
 describe('scanToolRootEntries', () => {
@@ -739,38 +662,33 @@ describe('scanToolRootEntries', () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it('scans files inside _tool directories', async () => {
+  it('scans tool-prefixed flat files at domain level', async () => {
     await buildSourceTree(sourceRoot, {
-      'shared/_cursor': ['settings.json'],
+      'shared/skills/my-skill': ['SKILL.md'],
     });
+    await writeFile(join(sourceRoot, 'shared', 'cursor--settings.json'), '{}');
 
     const config = makeConfig({ _localSourcePath: sourceRoot });
     const entries = await scanToolRootEntries(tmpDir, config);
     expect(entries).toHaveLength(1);
     expect(entries[0].toolName).toBe('cursor');
     expect(entries[0].name).toBe('settings.json');
-    expect(entries[0].isFile).toBe(true);
     expect(entries[0].source).toBe('hub');
     expect(entries[0].domain).toBe('shared');
   });
 
-  it('scans folders inside _tool directories', async () => {
-    await buildSourceTree(sourceRoot, {
-      'shared/_cursor/rules': ['review.md'],
-    });
+  it('ignores files for unconfigured tools', async () => {
+    await mkdir(join(sourceRoot, 'shared'), { recursive: true });
+    await writeFile(join(sourceRoot, 'shared', 'unknown--settings.json'), '{}');
 
     const config = makeConfig({ _localSourcePath: sourceRoot });
     const entries = await scanToolRootEntries(tmpDir, config);
-    expect(entries).toHaveLength(1);
-    expect(entries[0].toolName).toBe('cursor');
-    expect(entries[0].name).toBe('rules');
-    expect(entries[0].isFile).toBe(false);
+    expect(entries).toHaveLength(0);
   });
 
-  it('ignores _tool dirs for unconfigured tools', async () => {
-    await buildSourceTree(sourceRoot, {
-      'shared/_unknown': ['settings.json'],
-    });
+  it('ignores files without a tool prefix', async () => {
+    await mkdir(join(sourceRoot, 'shared'), { recursive: true });
+    await writeFile(join(sourceRoot, 'shared', 'plain.json'), '{}');
 
     const config = makeConfig({ _localSourcePath: sourceRoot });
     const entries = await scanToolRootEntries(tmpDir, config);
@@ -778,10 +696,10 @@ describe('scanToolRootEntries', () => {
   });
 
   it('scans across multiple domains', async () => {
-    await buildSourceTree(sourceRoot, {
-      'shared/_cursor': ['settings.json'],
-      'backend/_cursor': ['rules.md'],
-    });
+    await mkdir(join(sourceRoot, 'shared'), { recursive: true });
+    await mkdir(join(sourceRoot, 'backend'), { recursive: true });
+    await writeFile(join(sourceRoot, 'shared', 'cursor--settings.json'), '{}');
+    await writeFile(join(sourceRoot, 'backend', 'cursor--rules.md'), '');
 
     const config = makeConfig({ _localSourcePath: sourceRoot });
     const entries = await scanToolRootEntries(tmpDir, config);
@@ -790,11 +708,10 @@ describe('scanToolRootEntries', () => {
     expect(domains).toEqual(['backend', 'shared']);
   });
 
-  it('scans multiple _tool dirs for different tools', async () => {
-    await buildSourceTree(sourceRoot, {
-      'shared/_vscode': ['settings.json'],
-      'shared/_cursor': ['rules.md'],
-    });
+  it('scans files for different tools', async () => {
+    await mkdir(join(sourceRoot, 'shared'), { recursive: true });
+    await writeFile(join(sourceRoot, 'shared', 'vscode--settings.json'), '{}');
+    await writeFile(join(sourceRoot, 'shared', 'cursor--rules.md'), '');
 
     const config = makeConfig({ _localSourcePath: sourceRoot });
     const entries = await scanToolRootEntries(tmpDir, config);
@@ -803,9 +720,19 @@ describe('scanToolRootEntries', () => {
     expect(tools).toEqual(['cursor', 'vscode']);
   });
 
-  it('returns empty when no _tool dirs exist', async () => {
+  it('returns empty when no tool-prefixed files exist', async () => {
     await buildSourceTree(sourceRoot, {
       'shared/skills/my-skill': ['SKILL.md'],
+    });
+
+    const config = makeConfig({ _localSourcePath: sourceRoot });
+    const entries = await scanToolRootEntries(tmpDir, config);
+    expect(entries).toHaveLength(0);
+  });
+
+  it('ignores directories with tool prefix', async () => {
+    await buildSourceTree(sourceRoot, {
+      'shared/cursor--rules/my-rule': ['rule.md'],
     });
 
     const config = makeConfig({ _localSourcePath: sourceRoot });
@@ -826,16 +753,14 @@ describe('detectToolRootDuplicates', () => {
         name: 'settings.json',
         source: 'hub',
         domain: 'shared',
-        absolutePath: '/a/_cursor/settings.json',
-        isFile: true,
+        absolutePath: '/a/shared/cursor--settings.json',
       },
       {
         toolName: 'cursor',
         name: 'settings.json',
         source: 'extra',
         domain: 'shared',
-        absolutePath: '/b/_cursor/settings.json',
-        isFile: true,
+        absolutePath: '/b/shared/cursor--settings.json',
       },
     ];
     const dups = detectToolRootDuplicates(entries);
@@ -843,8 +768,8 @@ describe('detectToolRootDuplicates', () => {
     expect(dups[0].toolName).toBe('cursor');
     expect(dups[0].name).toBe('settings.json');
     expect(dups[0].paths).toEqual([
-      '/a/_cursor/settings.json',
-      '/b/_cursor/settings.json',
+      '/a/shared/cursor--settings.json',
+      '/b/shared/cursor--settings.json',
     ]);
   });
 
@@ -855,16 +780,14 @@ describe('detectToolRootDuplicates', () => {
         name: 'settings.json',
         source: 'hub',
         domain: 'shared',
-        absolutePath: '/a/_cursor/settings.json',
-        isFile: true,
+        absolutePath: '/a/shared/cursor--settings.json',
       },
       {
         toolName: 'vscode',
         name: 'settings.json',
         source: 'hub',
         domain: 'shared',
-        absolutePath: '/a/_vscode/settings.json',
-        isFile: true,
+        absolutePath: '/a/shared/vscode--settings.json',
       },
     ];
     const dups = detectToolRootDuplicates(entries);
@@ -878,8 +801,7 @@ describe('detectToolRootDuplicates', () => {
         name: 'settings.json',
         source: 'hub',
         domain: 'shared',
-        absolutePath: '/a',
-        isFile: true,
+        absolutePath: '/a/shared/cursor--settings.json',
       },
     ];
     expect(detectToolRootDuplicates(entries)).toHaveLength(0);

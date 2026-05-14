@@ -407,7 +407,7 @@ export async function syncRootFiles(
 }
 
 // ---------------------------------------------------------------------------
-// Tool root entry sync (_tool convention)
+// Tool root entry sync (tool-prefixed flat files)
 // ---------------------------------------------------------------------------
 
 export interface ToolRootSyncResult {
@@ -419,7 +419,8 @@ export interface ToolRootSyncResult {
 
 /**
  * Reconcile tool root entries: sync expected entries and remove orphans.
- * Entries from `_tool` directories are copied directly into the tool's root folder.
+ * Tool-prefixed flat files (e.g. `cursor--settings.json`) are copied directly
+ * into the tool's root folder (e.g. `.cursor/settings.json`).
  */
 export async function reconcileToolRootEntries(
   repoRoot: string,
@@ -440,7 +441,7 @@ export async function reconcileToolRootEntries(
   // Key = destination path, value = entry info
   const expectedEntries = new Map<
     string,
-    { sourcePath: string; name: string; isFile: boolean; toolDir: string }
+    { sourcePath: string; name: string; toolDir: string }
   >();
 
   for (const entry of entries) {
@@ -453,7 +454,6 @@ export async function reconcileToolRootEntries(
     expectedEntries.set(destPath, {
       sourcePath: entry.absolutePath,
       name: entry.name,
-      isFile: entry.isFile,
       toolDir,
     });
   }
@@ -487,20 +487,14 @@ export async function reconcileToolRootEntries(
     }
   }
 
-  // Sync expected entries
+  // Sync expected entries (always files)
   for (const [, expected] of expectedEntries) {
     try {
-      const result = expected.isFile
-        ? await syncFileFeature(
-            expected.sourcePath,
-            expected.toolDir,
-            expected.name
-          )
-        : await syncFolderFeature(
-            expected.sourcePath,
-            expected.toolDir,
-            expected.name
-          );
+      const result = await syncFileFeature(
+        expected.sourcePath,
+        expected.toolDir,
+        expected.name
+      );
 
       if (result === 'created') added++;
       else if (result === 'updated') updated++;

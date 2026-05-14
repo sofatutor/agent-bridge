@@ -583,7 +583,7 @@ async function removeStaleSourceDirs(repoRoot, config) {
 }
 //#endregion
 //#region src/lib/version.ts
-const VERSION = "0.7.0";
+const VERSION = "0.8.0";
 //#endregion
 //#region src/commands/init.ts
 const WELL_KNOWN_TOOLS = [
@@ -936,7 +936,11 @@ function detectDuplicates(features) {
 * workspace root. When a source contains `<domain>/AGENTS.md` (etc.), Agent Bridge
 * copies it to the project root.
 */
-const ROOT_FILES = ["AGENTS.md", "CLAUDE.md"];
+const ROOT_FILES = [
+	"AGENTS.md",
+	"CLAUDE.md",
+	"SYSTEM.md"
+];
 /**
 * Scan all sources × domains for well-known root files.
 * Returns one entry per found file.
@@ -971,6 +975,55 @@ function detectRootFileDuplicates(rootFiles) {
 	for (const [fileName, group] of byName) if (group.length > 1) duplicates.push({
 		fileName,
 		paths: group.map((rf) => rf.absolutePath)
+	});
+	return duplicates;
+}
+/**
+* Scan all sources × domains for tool-prefixed flat files at the domain level.
+* A file named `cursor--settings.json` targets the tool "cursor" with
+* destination filename "settings.json".
+*/
+async function scanToolRootEntries(repoRoot, config) {
+	const entries = [];
+	const toolNames = new Set(config.tools.map((t) => t.name));
+	for (const source of config.sources) {
+		const srcPath = resolveSourcePath(repoRoot, source);
+		for (const domain of config.domains) {
+			const domainDir = join(srcPath, domain);
+			if (!await dirExists(domainDir)) continue;
+			const domainEntries = await readdir(domainDir, { withFileTypes: true });
+			for (const entry of domainEntries) {
+				if (!entry.isFile()) continue;
+				const { toolPrefix, baseName } = parseToolPrefix(entry.name);
+				if (!toolPrefix || !toolNames.has(toolPrefix)) continue;
+				entries.push({
+					toolName: toolPrefix,
+					name: baseName,
+					source: source.name,
+					domain,
+					absolutePath: join(domainDir, entry.name)
+				});
+			}
+		}
+	}
+	return entries;
+}
+/**
+* Detect duplicate tool root entries (same tool + name from multiple sources/domains).
+*/
+function detectToolRootDuplicates(entries) {
+	const byKey = /* @__PURE__ */ new Map();
+	for (const entry of entries) {
+		const key = `${entry.toolName}/${entry.name}`;
+		const group = byKey.get(key) ?? [];
+		group.push(entry);
+		byKey.set(key, group);
+	}
+	const duplicates = [];
+	for (const [, group] of byKey) if (group.length > 1) duplicates.push({
+		toolName: group[0].toolName,
+		name: group[0].name,
+		paths: group.map((e) => e.absolutePath)
 	});
 	return duplicates;
 }
@@ -1182,6 +1235,67 @@ async function syncRootFiles(repoRoot, rootFiles) {
 		errors
 	};
 }
+/**
+* Reconcile tool root entries: sync expected entries and remove orphans.
+* Tool-prefixed flat files (e.g. `cursor--settings.json`) are copied directly
+* into the tool's root folder (e.g. `.cursor/settings.json`).
+*/
+async function reconcileToolRootEntries(repoRoot, config, entries) {
+	let added = 0;
+	let updated = 0;
+	let removed = 0;
+	const errors = [];
+	const toolFolders = /* @__PURE__ */ new Map();
+	for (const tool of config.tools) toolFolders.set(tool.name, tool.folder);
+	const expectedEntries = /* @__PURE__ */ new Map();
+	for (const entry of entries) {
+		const folder = toolFolders.get(entry.toolName);
+		if (!folder) continue;
+		const toolDir = join(repoRoot, folder);
+		const destPath = join(toolDir, entry.name);
+		expectedEntries.set(destPath, {
+			sourcePath: entry.absolutePath,
+			name: entry.name,
+			toolDir
+		});
+	}
+	for (const tool of config.tools) {
+		const toolDir = join(repoRoot, tool.folder);
+		const manifest = await readManifest(toolDir);
+		for (const manifestEntry of manifest) {
+			const isFolder = isManifestFolder(manifestEntry);
+			const destPath = join(toolDir, manifestEntryName(manifestEntry));
+			if (expectedEntries.has(destPath)) continue;
+			try {
+				if (isFolder) await removeDir(destPath);
+				else await removeFile(destPath);
+				await removeFromManifest(toolDir, manifestEntry);
+				removed++;
+			} catch (err) {
+				errors.push({
+					path: destPath,
+					error: err instanceof Error ? err.message : String(err)
+				});
+			}
+		}
+	}
+	for (const [, expected] of expectedEntries) try {
+		const result = await syncFileFeature(expected.sourcePath, expected.toolDir, expected.name);
+		if (result === "created") added++;
+		else if (result === "updated") updated++;
+	} catch (err) {
+		errors.push({
+			path: join(expected.toolDir, expected.name),
+			error: err instanceof Error ? err.message : String(err)
+		});
+	}
+	return {
+		added,
+		updated,
+		removed,
+		errors
+	};
+}
 //#endregion
 //#region src/commands/sync.ts
 async function syncCommand(cwd, _opts) {
@@ -1208,6 +1322,7 @@ async function syncCommand(cwd, _opts) {
 	s.start("Discovering features…");
 	const features = await scanFeatures(repoRoot, config, await discoverFeatureTypes(repoRoot, config));
 	const rootFiles = await scanRootFiles(repoRoot, config);
+	const toolRootEntries = await scanToolRootEntries(repoRoot, config);
 	const duplicates = detectDuplicates(features);
 	if (duplicates.length > 0) {
 		s.stop("Duplicate features detected");
@@ -1220,7 +1335,13 @@ async function syncCommand(cwd, _opts) {
 		for (const dup of rootDuplicates) p.log.error(`Duplicate "${dup.fileName}": ${dup.paths.join(", ")}`);
 		process.exit(1);
 	}
-	s.stop(`${features.length} features found${rootFiles.length > 0 ? `, ${rootFiles.length} root file(s)` : ""}`);
+	const toolRootDuplicates = detectToolRootDuplicates(toolRootEntries);
+	if (toolRootDuplicates.length > 0) {
+		s.stop("Duplicate tool root entries detected");
+		for (const dup of toolRootDuplicates) p.log.error(`Duplicate "${dup.name}" for tool "${dup.toolName}": ${dup.paths.join(", ")}`);
+		process.exit(1);
+	}
+	s.stop(`${features.length} features found${rootFiles.length > 0 ? `, ${rootFiles.length} root file(s)` : ""}${toolRootEntries.length > 0 ? `, ${toolRootEntries.length} tool root entr${toolRootEntries.length === 1 ? "y" : "ies"}` : ""}`);
 	s.start("Checking for path conflicts…");
 	const conflicts = [];
 	for (const tool of config.tools) for (const feature of features) {
@@ -1257,6 +1378,16 @@ async function syncCommand(cwd, _opts) {
 		const rootResult = await syncRootFiles(repoRoot, []);
 		for (const name of rootResult.removed) p.log.info(`Root file removed: ${name}`);
 	}
+	s.start("Syncing tool root entries…");
+	const toolRootResult = await reconcileToolRootEntries(repoRoot, config, toolRootEntries);
+	if (toolRootResult.added > 0 || toolRootResult.updated > 0 || toolRootResult.removed > 0) p.log.info(`Tool root: Added: ${toolRootResult.added}  Updated: ${toolRootResult.updated}  Removed: ${toolRootResult.removed}`);
+	if (toolRootResult.errors.length > 0) {
+		for (const err of toolRootResult.errors) p.log.error(`${err.path}: ${err.error}`);
+		s.stop("Tool root entries synced with errors");
+		p.outro(`Sync completed with ${toolRootResult.errors.length} error(s).`);
+		process.exit(1);
+	}
+	s.stop("Tool root entries synced");
 	p.outro("Sync complete.");
 }
 //#endregion

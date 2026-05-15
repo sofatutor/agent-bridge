@@ -53,6 +53,34 @@ The interactive init flow will:
 6. Create `.agent-bridge/.gitignore` (ignores cloned repos, keeps config).
 7. Optionally install git hooks to auto-sync on checkout/merge.
 
+#### Non-Interactive Mode
+
+Pass `--tools` and `--source` to skip all prompts:
+
+```bash
+agent-bridge init \
+  --tools cursor,vscode,claude \
+  --source https://github.com/org/repo.git#main
+```
+
+Multiple sources and custom tools are supported:
+
+```bash
+agent-bridge init \
+  --domains shared,backend \
+  --tools cursor,windsurf:.windsurf \
+  --source https://github.com/org/repo.git#main \
+  --source /local/path \
+  --hooks
+```
+
+| Option              | Description                                                                              |
+| ------------------- | ---------------------------------------------------------------------------------------- |
+| `--tools <list>`    | Comma-separated tool names (`cursor`, `vscode`, `claude`) or `name:folder` pairs         |
+| `-s, --source <url>`| Source URL or path (repeatable). Append `#branch` for a specific branch                  |
+| `--domains <list>`  | Comma-separated domain list (default: `backend,frontend,shared`)                         |
+| `--hooks`           | Auto-install git hooks without prompting                                                 |
+
 After init, commit `.agent-bridge/config.yml` to your repo.
 
 ### 2. Sync
@@ -120,7 +148,7 @@ Or re-run `agent-bridge init` — Agent Bridge hooks are automatically updated o
 
 | Command               | Description                                            |
 | --------------------- | ------------------------------------------------------ |
-| `agent-bridge init`   | Interactive setup — creates `.agent-bridge/config.yml` |
+| `agent-bridge init`   | Interactive setup — creates `.agent-bridge/config.yml` (supports [non-interactive mode](#non-interactive-mode)) |
 | `agent-bridge sync`   | Fetch sources, discover features, reconcile files      |
 | `agent-bridge update` | Fetch latest changes for all remote sources            |
 

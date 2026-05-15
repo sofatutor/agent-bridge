@@ -11,6 +11,11 @@ import { VERSION } from './lib/version.js';
 export interface CliOptions {
   cwd?: string;
   force?: boolean;
+  // Init-specific options (ignored by other commands)
+  domains?: string;
+  tools?: string;
+  source?: string[];
+  hooks?: boolean;
 }
 
 async function assertCwdExists(cwd: string): Promise<void> {
@@ -39,6 +44,11 @@ async function withCwdValidation(
   };
 }
 
+function collect(value: string, previous: string[]): string[] {
+  previous.push(value);
+  return previous;
+}
+
 const program = new Command()
   .name('agent-bridge')
   .description('Manage AI tool configurations from multiple sources')
@@ -49,6 +59,10 @@ program
   .description('Initialize Agent Bridge (creates .agent-bridge/config.yml)')
   .option('--cwd <path>', 'Override the working directory')
   .option('--force', 'Overwrite existing non-Agent-Bridge git hooks')
+  .option('--domains <list>', 'Comma-separated domain list (default: backend,frontend,shared)')
+  .option('--tools <list>', 'Comma-separated tool names (cursor,vscode,claude) or name:folder pairs')
+  .option('-s, --source <url>', 'Source URL or path (repeatable, append #branch for branch)', collect, [])
+  .option('--hooks', 'Auto-install git hooks without prompting')
   .action(await withCwdValidation(initCommand));
 
 program

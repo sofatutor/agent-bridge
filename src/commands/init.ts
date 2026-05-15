@@ -19,9 +19,21 @@ const WELL_KNOWN_TOOLS = [
   { value: { name: 'claude', folder: '.claude' }, label: 'Claude (.claude/)' },
 ];
 
+const WELL_KNOWN_TOOL_MAP: Record<string, ToolConfig> = Object.fromEntries(
+  WELL_KNOWN_TOOLS.map((t) => [t.value.name, t.value])
+);
+
 const CUSTOM_TOOL_SENTINEL: ToolConfig = { name: '__custom__', folder: '__custom__' };
 
 const DEFAULT_DOMAINS = ['backend', 'frontend', 'shared'];
+
+export interface InitOptions {
+  force?: boolean;
+  domains?: string;
+  tools?: string;
+  source?: string[];
+  hooks?: boolean;
+}
 
 /**
  * Derive a short source name from a URL or local path.
@@ -52,11 +64,137 @@ export function deriveSourceName(source: string): string {
   return base.replace(/\.git$/, '') || 'source';
 }
 
+/**
+ * Parse a comma-separated `--tools` argument into ToolConfig[].
+ * Accepts well-known names (cursor, vscode, claude) or `name:folder` pairs.
+ */
+export function parseToolsArg(input: string): ToolConfig[] {
+  return input.split(',').map((t) => {
+    const trimmed = t.trim();
+    if (!trimmed) throw new Error('Empty tool name in --tools');
+
+    if (WELL_KNOWN_TOOL_MAP[trimmed]) return WELL_KNOWN_TOOL_MAP[trimmed];
+
+    const colonIdx = trimmed.indexOf(':');
+    if (colonIdx > 0) {
+      return { name: trimmed.slice(0, colonIdx), folder: trimmed.slice(colonIdx + 1) };
+    }
+
+    throw new Error(
+      `Unknown tool "${trimmed}". Use a known name (${Object.keys(WELL_KNOWN_TOOL_MAP).join(', ')}) or name:folder format.`
+    );
+  });
+}
+
+/**
+ * Parse a single `--source` argument into a SourceConfig.
+ * Supports `#branch` suffix for remote sources.
+ */
+export function parseSourceArg(input: string, repoRoot: string): SourceConfig {
+  let source = input.trim();
+  let branch: string | undefined;
+
+  const hashIdx = source.lastIndexOf('#');
+  if (hashIdx > 0) {
+    branch = source.slice(hashIdx + 1);
+    source = source.slice(0, hashIdx);
+  }
+
+  if (!source) throw new Error('Empty source in --source');
+
+  const name = deriveSourceName(source);
+  const entry: SourceConfig = { name, source };
+
+  if (!isRemoteSource(entry.source)) {
+    entry.source = resolve(repoRoot, entry.source);
+  }
+
+  if (branch) {
+    entry.branch = branch;
+  }
+
+  return entry;
+}
+
 export async function initCommand(
   cwd?: string,
-  opts?: { force?: boolean }
+  opts?: InitOptions
 ): Promise<void> {
   const repoRoot = cwd ?? findRepoRoot();
+
+  const hasToolsArg = !!opts?.tools;
+  const hasSourceArg = !!(opts?.source && opts.source.length > 0);
+
+  // Require both --tools and --source for non-interactive mode
+  if (hasToolsArg !== hasSourceArg) {
+    p.log.error('Both --tools and --source are required for non-interactive init.');
+    process.exit(1);
+  }
+
+  // --- Non-interactive mode ---
+  if (hasToolsArg && hasSourceArg) {
+    const domains = opts!.domains
+      ? opts!.domains.split(',').map((d) => d.trim()).filter(Boolean)
+      : [...DEFAULT_DOMAINS];
+
+    const tools = parseToolsArg(opts!.tools!);
+    const sources = opts!.source!.map((s) => parseSourceArg(s, repoRoot));
+
+    // Check duplicate source names
+    const seen = new Set<string>();
+    for (const s of sources) {
+      if (seen.has(s.name)) {
+        throw new Error(`Duplicate source name "${s.name}" derived from --source arguments`);
+      }
+      seen.add(s.name);
+    }
+
+    const config: BridgeConfig = {
+      version: VERSION,
+      domains,
+      tools,
+      sources,
+    };
+
+    await saveConfig(repoRoot, config);
+    await ensureBridgeGitignore(repoRoot);
+    p.log.success('Saved .agent-bridge/config.yml');
+
+    // Fetch remote sources
+    const spinner = p.spinner();
+    spinner.start('Fetching remote sources…');
+    const results = await syncAllSources(repoRoot, config);
+    const fetchErrors = results.filter((r) => r.error);
+    if (fetchErrors.length > 0) {
+      spinner.stop('Some sources failed');
+      for (const err of fetchErrors) {
+        p.log.error(`${err.name}: ${err.error}`);
+      }
+    } else {
+      spinner.stop('All sources ready');
+    }
+
+    // Git hooks (--hooks flag)
+    if (opts!.hooks && isInGitRepo(repoRoot)) {
+      const hookResult = await installGitHooks(repoRoot, opts!.force === true);
+      if (hookResult.installed.length > 0) {
+        p.log.success(`Installed git hooks: ${hookResult.installed.join(', ')}`);
+      }
+      if (hookResult.skipped.length > 0) {
+        p.log.warn(`Skipped hooks: ${hookResult.skipped.join(', ')}`);
+      }
+      if (hookResult.errors.length > 0) {
+        for (const e of hookResult.errors) {
+          p.log.error(`Hook ${e.hook}: ${e.error}`);
+        }
+      }
+    }
+
+    p.outro('Done! Run `agent-bridge sync` to sync features.');
+    return;
+  }
+
+  // --- Interactive mode ---
 
   p.intro('Welcome to Agent Bridge — Project Setup');
 

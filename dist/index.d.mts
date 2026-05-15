@@ -2,6 +2,10 @@
 interface CliOptions {
   cwd?: string;
   force?: boolean;
+  domains?: string;
+  tools?: string;
+  source?: string[];
+  hooks?: boolean;
 }
 //#endregion
 export { CliOptions };

@@ -35,6 +35,7 @@ Features and feature types can be scoped to a specific tool using the `<tool>--`
 | `backend/skills/cursor--code-review/`  | Cursor only  | `skills/code-review`   |
 
 Rules:
+
 1. The separator is a **double dash** (`--`)
 2. The prefix is **stripped** from the folder name
 3. Features **without** a prefix sync to **all** tools
@@ -44,11 +45,11 @@ Rules:
 
 Certain well-known files placed at the **domain root** (not inside a feature-type folder) are treated as **root files** and copied directly to the workspace root:
 
-| File        | Purpose                               |
-| ----------- | ------------------------------------- |
+| File        | Purpose                                        |
+| ----------- | ---------------------------------------------- |
 | `AGENTS.md` | Always-on agent instructions (VS Code, Cursor) |
-| `CLAUDE.md` | Always-on instructions for Claude Code |
-| `SYSTEM.md` | Custom system prompt for Pi            |
+| `CLAUDE.md` | Always-on instructions for Claude Code         |
+| `SYSTEM.md` | Custom system prompt for Pi                    |
 
 Example source layout:
 
@@ -64,6 +65,7 @@ Example source layout:
 ```
 
 Rules:
+
 1. Root files must be **unique** across all sources × domains. If two domains both provide `AGENTS.md`, sync halts with an error.
 2. A `<!-- Managed by Agent Bridge -->` marker is prepended when copied. Files without this marker are treated as user-created and **never** overwritten.
 3. When a root file is removed from the source, the managed copy at the workspace root is deleted automatically.
@@ -85,6 +87,7 @@ This reuses the existing `--` prefix convention and is useful for syncing arbitr
 ```
 
 Rules:
+
 1. The tool name before `--` must match a configured tool name (e.g. `cursor--settings.json` matches `{ name: 'cursor', folder: '.cursor' }`).
 2. Files with an unrecognized tool prefix (where the name doesn't match any configured tool) are **ignored**.
 3. Each tool root file is tracked in the tool root's `.agentbridge` manifest.

@@ -583,7 +583,7 @@ async function removeStaleSourceDirs(repoRoot, config) {
 }
 //#endregion
 //#region src/lib/version.ts
-const VERSION = "0.9.0";
+const VERSION = "0.10.0";
 //#endregion
 //#region src/commands/init.ts
 const WELL_KNOWN_TOOLS = [
@@ -607,6 +607,13 @@ const WELL_KNOWN_TOOLS = [
 			folder: ".claude"
 		},
 		label: "Claude (.claude/)"
+	},
+	{
+		value: {
+			name: "pi",
+			folder: ".pi"
+		},
+		label: "Pi (.pi/)"
 	}
 ];
 const WELL_KNOWN_TOOL_MAP = Object.fromEntries(WELL_KNOWN_TOOLS.map((t) => [t.value.name, t.value]));

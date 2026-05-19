@@ -17,6 +17,7 @@ const WELL_KNOWN_TOOLS = [
   { value: { name: 'vscode', folder: '.github' }, label: 'VS Code (.github/)' },
   { value: { name: 'cursor', folder: '.cursor' }, label: 'Cursor (.cursor/)' },
   { value: { name: 'claude', folder: '.claude' }, label: 'Claude (.claude/)' },
+  { value: { name: 'pi', folder: '.pi' }, label: 'Pi (.pi/)' },
 ];
 
 const WELL_KNOWN_TOOL_MAP: Record<string, ToolConfig> = Object.fromEntries(

@@ -91,12 +91,13 @@ const bridgeConfigSchema = z.object({
 const BRIDGE_DIR = ".agent-bridge";
 const CONFIG_FILENAME = "config.yml";
 /**
-* Tombstone written by `opt-out` that survives `.agent-bridge/` deletion.
-* `init`/`sync` honor it so a `postinstall` guard doesn't silently reinstall
-* Agent Bridge on the next `npm install`. Commit it for a repo-wide opt-out,
-* or gitignore it to keep opt-out local to your machine.
+* Tombstone written by `opt-out`. It lives inside `.agent-bridge/` so it's
+* gitignored by default (the directory's `.gitignore` ignores everything but
+* `config.yml`), keeping opt-out local to a machine. `init`/`sync` honor it so
+* a `postinstall` guard doesn't silently reinstall Agent Bridge on the next
+* `npm install`. Force-add it (`git add -f`) to commit a repo-wide opt-out.
 */
-const OPT_OUT_MARKER = ".agent-bridge.optout";
+const OPT_OUT_MARKER = join(BRIDGE_DIR, "optout");
 function detectSourceType(source) {
 	if (source.startsWith("https://") || source.startsWith("http://") || source.startsWith("file://")) return "git-https";
 	if (/^[\w.-]+@[\w.-]+:/.test(source)) return "git-ssh";
@@ -127,8 +128,19 @@ async function isOptedOut(repoRoot) {
 		return false;
 	}
 }
-/** Write the opt-out tombstone. */
+/**
+* Write the opt-out tombstone inside `.agent-bridge/`. Recreates the directory
+* (opt-out deletes it) and its `.gitignore` so the marker is ignored by default.
+*/
 async function writeOptOutMarker(repoRoot) {
+	const dir = bridgeDir(repoRoot);
+	await mkdir(dir, { recursive: true });
+	await writeFile(join(dir, ".gitignore"), [
+		"# Ignore cloned sources",
+		"*",
+		"!config.yml",
+		"!.gitignore"
+	].join("\n") + "\n", "utf-8");
 	await writeFile(optOutMarkerPath(repoRoot), "# Agent Bridge opt-out marker. Remove this file (or run `agent-bridge init --force`) to re-enable.\n", "utf-8");
 }
 /** Remove the opt-out tombstone if present (idempotent). */
@@ -630,7 +642,7 @@ async function removeStaleSourceDirs(repoRoot, config) {
 }
 //#endregion
 //#region src/lib/version.ts
-const VERSION = "0.12.0";
+const VERSION = "0.13.0";
 //#endregion
 //#region src/commands/init.ts
 const WELL_KNOWN_TOOLS = [
@@ -1593,7 +1605,7 @@ async function optOutCommand(cwd, _opts) {
 		s.stop(".agent-bridge removed");
 	} else s.stop(".agent-bridge not found");
 	await writeOptOutMarker(repoRoot);
-	p.log.info(`Wrote ${OPT_OUT_MARKER}. Commit it for a repo-wide opt-out, or gitignore it to keep opt-out local. Run \`agent-bridge init --force\` to re-enable.`);
+	p.log.info(`Wrote ${OPT_OUT_MARKER} (gitignored, local to this machine). Force-add it (\`git add -f\`) for a repo-wide opt-out. Run \`agent-bridge init --force\` to re-enable.`);
 	const totalErrors = featureErrors + toolRootErrors;
 	if (totalErrors > 0) {
 		p.outro(`Opt-out completed with ${totalErrors} cleanup error(s).`);

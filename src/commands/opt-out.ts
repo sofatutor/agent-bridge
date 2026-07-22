@@ -1,5 +1,12 @@
 import * as p from '@clack/prompts';
-import { bridgeDir, configExists, loadConfig, type BridgeConfig } from '../lib/config.js';
+import {
+  bridgeDir,
+  configExists,
+  loadConfig,
+  writeOptOutMarker,
+  OPT_OUT_MARKER,
+  type BridgeConfig,
+} from '../lib/config.js';
 import { removeDir, dirExists } from '../lib/fs.js';
 import { findRepoRoot, isInGitRepo, removeGitHooks } from '../lib/git.js';
 import { reconcileFeatures, reconcileToolRootEntries } from '../lib/sync.js';
@@ -82,6 +89,14 @@ export async function optOutCommand(
   } else {
     s.stop('.agent-bridge not found');
   }
+
+  // Write a tombstone that survives `.agent-bridge/` deletion so a postinstall
+  // guard (or a manual init/sync) won't silently reinstall on the next install.
+  await writeOptOutMarker(repoRoot);
+  p.log.info(
+    `Wrote ${OPT_OUT_MARKER}. Commit it for a repo-wide opt-out, or gitignore it to keep opt-out local. ` +
+      'Run `agent-bridge init --force` to re-enable.'
+  );
 
   const totalErrors = featureErrors + toolRootErrors;
   if (totalErrors > 0) {

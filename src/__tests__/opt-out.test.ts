@@ -3,10 +3,20 @@ import { mkdtemp, rm, mkdir, writeFile, access, readFile } from 'node:fs/promise
 import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { saveConfig, type BridgeConfig } from '../lib/config.js';
+import { saveConfig, OPT_OUT_MARKER, type BridgeConfig } from '../lib/config.js';
 import { syncCommand } from '../commands/sync.js';
 import { optOutCommand } from '../commands/opt-out.js';
+import { initCommand } from '../commands/init.js';
 import { installGitHooks } from '../lib/git.js';
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 describe('optOutCommand', () => {
   let tmpDir: string;
@@ -150,5 +160,45 @@ describe('optOutCommand', () => {
       'utf-8'
     );
     expect(customHook).toContain('custom hook');
+  });
+
+  it('writes an opt-out tombstone that survives cleanup', async () => {
+    await optOutCommand(repoRoot);
+    expect(await exists(join(repoRoot, OPT_OUT_MARKER))).toBe(true);
+  });
+
+  it('init is a no-op while the tombstone is present', async () => {
+    await optOutCommand(repoRoot);
+
+    await initCommand(repoRoot, {
+      tools: 'vscode',
+      source: [sourceRoot],
+      domains: 'shared',
+    });
+
+    // Config must NOT be recreated, and the tombstone must remain.
+    expect(await exists(join(repoRoot, '.agent-bridge', 'config.yml'))).toBe(false);
+    expect(await exists(join(repoRoot, OPT_OUT_MARKER))).toBe(true);
+  });
+
+  it('init --force clears the tombstone and re-enables', async () => {
+    await optOutCommand(repoRoot);
+
+    await initCommand(repoRoot, {
+      tools: 'vscode',
+      source: [sourceRoot],
+      domains: 'shared',
+      force: true,
+    });
+
+    expect(await exists(join(repoRoot, OPT_OUT_MARKER))).toBe(false);
+    expect(await exists(join(repoRoot, '.agent-bridge', 'config.yml'))).toBe(true);
+  });
+
+  it('sync skips while the tombstone is present', async () => {
+    await optOutCommand(repoRoot);
+    // Config is gone after opt-out; sync must return without throwing.
+    await syncCommand(repoRoot);
+    expect(await exists(join(repoRoot, OPT_OUT_MARKER))).toBe(true);
   });
 });

@@ -603,7 +603,7 @@ async function removeStaleSourceDirs(repoRoot, config) {
 }
 //#endregion
 //#region src/lib/version.ts
-const VERSION = "0.10.0";
+const VERSION = "0.11.0";
 //#endregion
 //#region src/commands/init.ts
 const WELL_KNOWN_TOOLS = [
@@ -1519,23 +1519,14 @@ async function updateCommand(cwd, _opts) {
 function summarizeTools(config) {
 	return config.tools.map((t) => t.name).join(", ");
 }
-async function optOutCommand(cwd, opts) {
+async function optOutCommand(cwd, _opts) {
 	const repoRoot = cwd ?? findRepoRoot();
 	p.intro("Agent Bridge Opt-out");
 	const hasConfig = await configExists(repoRoot);
 	let config;
 	if (hasConfig) config = await loadConfig(repoRoot);
-	if (!opts?.force) {
-		const toolSummary = config ? summarizeTools(config) : "unknown (no config found)";
-		const confirmed = await p.confirm({
-			message: `This will remove Agent Bridge managed files for tools: ${toolSummary}, delete Agent Bridge git hooks, and delete .agent-bridge/. Continue?`,
-			initialValue: false
-		});
-		if (p.isCancel(confirmed) || !confirmed) {
-			p.cancel("Opt-out cancelled.");
-			return;
-		}
-	}
+	const toolSummary = config ? summarizeTools(config) : "unknown (no config found)";
+	p.log.info(`Non-interactive opt-out: removing Agent Bridge managed files for tools: ${toolSummary}`);
 	const s = p.spinner();
 	let featureErrors = 0;
 	let toolRootErrors = 0;
@@ -1598,7 +1589,7 @@ const program = new Command().name("agent-bridge").description("Manage AI tool c
 program.command("init").description("Initialize Agent Bridge (creates .agent-bridge/config.yml)").option("--cwd <path>", "Override the working directory").option("--force", "Overwrite existing non-Agent-Bridge git hooks").option("--domains <list>", "Comma-separated domain list (default: backend,frontend,shared)").option("--tools <list>", "Comma-separated tool names (cursor,vscode,claude) or name:folder pairs").option("-s, --source <url>", "Source URL or path (repeatable, append #branch for branch)", collect, []).option("--hooks", "Auto-install git hooks without prompting").action(await withCwdValidation(initCommand));
 program.command("sync").description("Fetch sources, discover features, and sync files").option("--cwd <path>", "Override the working directory").action(await withCwdValidation(syncCommand));
 program.command("update").description("Fetch latest changes for all remote sources").option("--cwd <path>", "Override the working directory").action(await withCwdValidation(updateCommand));
-program.command("opt-out").description("Remove Agent Bridge hooks, synced files, and .agent-bridge state").option("--cwd <path>", "Override the working directory").option("--force", "Skip confirmation prompt").action(await withCwdValidation(optOutCommand));
+program.command("opt-out").description("Remove Agent Bridge hooks, synced files, and .agent-bridge state").option("--cwd <path>", "Override the working directory").action(await withCwdValidation(optOutCommand));
 program.parse();
 //#endregion
 export {};

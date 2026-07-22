@@ -106,6 +106,21 @@ Pulls the latest changes from all remote sources. Local sources require no updat
 
 After updating, run `agent-bridge sync` to reconcile features.
 
+### 4. Opt Out
+
+```bash
+agent-bridge opt-out
+```
+
+`opt-out` is non-interactive and removes Agent Bridge from the current repository by:
+- Removing synced feature and tool-root entries tracked in `.agentbridge` manifests
+- Removing Agent Bridge-managed git hooks (`post-checkout`, `post-merge`)
+- Deleting `.agent-bridge/` (including `config.yml` and cloned sources)
+
+Notes:
+- Root files like `AGENTS.md`, `CLAUDE.md`, and `SYSTEM.md` are not removed by `opt-out`.
+- Existing non-Agent-Bridge hooks are preserved.
+
 ## Git Hooks (Auto-Sync)
 
 When running `agent-bridge init` inside a Git repository, you'll be prompted to install git hooks that automatically keep your AI agent configurations up to date. If enabled, Agent Bridge installs:
@@ -136,7 +151,11 @@ If you already have custom `post-checkout` or `post-merge` hooks, Agent Bridge w
 
 ### Removing Hooks
 
-Agent Bridge marks its hooks with a special comment. To remove them, delete the hook files:
+Agent Bridge marks its hooks with a special comment.
+
+Recommended: run `agent-bridge opt-out` to remove Agent Bridge-managed hooks and state.
+
+Manual alternative: delete the hook files:
 
 ```bash
 rm .git/hooks/post-checkout .git/hooks/post-merge
@@ -151,6 +170,7 @@ Or re-run `agent-bridge init` — Agent Bridge hooks are automatically updated o
 | `agent-bridge init`   | Interactive setup — creates `.agent-bridge/config.yml` (supports [non-interactive mode](#non-interactive-mode)) |
 | `agent-bridge sync`   | Fetch sources, discover features, reconcile files      |
 | `agent-bridge update` | Fetch latest changes for all remote sources            |
+| `agent-bridge opt-out`| Non-interactive cleanup of Agent Bridge-managed state  |
 
 ### Global Options
 
@@ -185,6 +205,7 @@ agent-bridge sync --cwd /path/to/my-project
 | Path conflict error          | A non-managed folder exists at the destination — rename or remove it |
 | Git hooks not installed      | Run `agent-bridge init` from inside a Git repository                 |
 | Hooks skipped (existing)     | Existing non-Agent-Bridge hooks are preserved; integrate manually    |
+| Remove Agent Bridge from repo| Run `agent-bridge opt-out`                                            |
 
 ## Development
 

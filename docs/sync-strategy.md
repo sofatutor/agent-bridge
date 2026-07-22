@@ -67,6 +67,16 @@ When features are removed from a source and you re-run `agent-bridge sync`:
 - Empty parent directories left behind (e.g. `.github/agents/` after all agents are removed) are cleaned up.
 - Real files and directories (those without a `.agentbridge` marker) are **never** deleted — only folders managed by Agent Bridge are touched.
 
+## Opt-out Behavior
+
+Running `agent-bridge opt-out` performs a non-interactive cleanup for the current repository:
+
+- Removes entries tracked in `.agentbridge` manifests (feature and tool-root entries)
+- Removes Agent Bridge-managed git hooks (`post-checkout`, `post-merge`)
+- Deletes `.agent-bridge/` (config and cloned sources)
+
+`opt-out` intentionally does not remove root files (`AGENTS.md`, `CLAUDE.md`, `SYSTEM.md`) even when they carry the managed marker.
+
 ## Root Files
 
 Root files (`AGENTS.md`, `CLAUDE.md`, `SYSTEM.md`) placed at the domain root in a source are

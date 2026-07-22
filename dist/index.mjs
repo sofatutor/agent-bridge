@@ -293,6 +293,26 @@ async function installGitHooks(repoRoot, force = false) {
 	}
 	return result;
 }
+/**
+* Remove Agent Bridge git hooks from the repository.
+* Only removes hooks that have the Agent Bridge marker.
+*/
+async function removeGitHooks(repoRoot) {
+	const removed = [];
+	if (!isInGitRepo(repoRoot)) return removed;
+	const hooksDir = getGitHooksDir(repoRoot);
+	for (const hookName of AGENT_BRIDGE_HOOKS) {
+		const hookPath = join(hooksDir, hookName);
+		try {
+			if (await hasAgentBridgeHook(hookPath)) {
+				const { unlink } = await import("node:fs/promises");
+				await unlink(hookPath);
+				removed.push(hookName);
+			}
+		} catch {}
+	}
+	return removed;
+}
 //#endregion
 //#region src/lib/fs.ts
 const { pathExists, remove, outputFile, readFile: fsReadFile, ensureDir } = fsExtra;
@@ -583,7 +603,7 @@ async function removeStaleSourceDirs(repoRoot, config) {
 }
 //#endregion
 //#region src/lib/version.ts
-const VERSION = "0.10.0";
+const VERSION = "0.11.0";
 //#endregion
 //#region src/commands/init.ts
 const WELL_KNOWN_TOOLS = [
@@ -1495,6 +1515,54 @@ async function updateCommand(cwd, _opts) {
 	else p.outro("All sources up to date.");
 }
 //#endregion
+//#region src/commands/opt-out.ts
+function summarizeTools(config) {
+	return config.tools.map((t) => t.name).join(", ");
+}
+async function optOutCommand(cwd, _opts) {
+	const repoRoot = cwd ?? findRepoRoot();
+	p.intro("Agent Bridge Opt-out");
+	const hasConfig = await configExists(repoRoot);
+	let config;
+	if (hasConfig) config = await loadConfig(repoRoot);
+	const toolSummary = config ? summarizeTools(config) : "unknown (no config found)";
+	p.log.info(`Non-interactive opt-out: removing Agent Bridge managed files for tools: ${toolSummary}`);
+	const s = p.spinner();
+	let featureErrors = 0;
+	let toolRootErrors = 0;
+	if (config) {
+		s.start("Removing synced Agent Bridge files…");
+		const featureResult = await reconcileFeatures(repoRoot, config, []);
+		const toolRootResult = await reconcileToolRootEntries(repoRoot, config, []);
+		featureErrors = featureResult.errors.length;
+		toolRootErrors = toolRootResult.errors.length;
+		s.stop("Synced files removed");
+		p.log.info(`Features removed: ${featureResult.removed} (errors: ${featureErrors})`);
+		p.log.info(`Tool-root files removed: ${toolRootResult.removed} (errors: ${toolRootErrors})`);
+		p.log.info("Root files are not removed by opt-out (manifest-only cleanup).");
+		for (const err of featureResult.errors) p.log.error(`${err.path}: ${err.error}`);
+		for (const err of toolRootResult.errors) p.log.error(`${err.path}: ${err.error}`);
+	} else p.log.warn("No .agent-bridge/config.yml found. Skipping synced file cleanup.");
+	s.start("Removing Agent Bridge git hooks…");
+	const removedHooks = isInGitRepo(repoRoot) ? await removeGitHooks(repoRoot) : [];
+	s.stop("Hooks cleanup complete");
+	if (removedHooks.length > 0) p.log.info(`Removed hooks: ${removedHooks.join(", ")}`);
+	else if (isInGitRepo(repoRoot)) p.log.info("No Agent Bridge hooks found.");
+	else p.log.info("Not a git repository; hook cleanup skipped.");
+	s.start("Removing .agent-bridge directory…");
+	const bridgePath = bridgeDir(repoRoot);
+	if (await dirExists(bridgePath)) {
+		await removeDir(bridgePath);
+		s.stop(".agent-bridge removed");
+	} else s.stop(".agent-bridge not found");
+	const totalErrors = featureErrors + toolRootErrors;
+	if (totalErrors > 0) {
+		p.outro(`Opt-out completed with ${totalErrors} cleanup error(s).`);
+		process.exit(1);
+	}
+	p.outro("Opt-out complete. Agent Bridge is removed from this repository.");
+}
+//#endregion
 //#region src/index.ts
 async function assertCwdExists(cwd) {
 	try {
@@ -1521,6 +1589,7 @@ const program = new Command().name("agent-bridge").description("Manage AI tool c
 program.command("init").description("Initialize Agent Bridge (creates .agent-bridge/config.yml)").option("--cwd <path>", "Override the working directory").option("--force", "Overwrite existing non-Agent-Bridge git hooks").option("--domains <list>", "Comma-separated domain list (default: backend,frontend,shared)").option("--tools <list>", "Comma-separated tool names (cursor,vscode,claude) or name:folder pairs").option("-s, --source <url>", "Source URL or path (repeatable, append #branch for branch)", collect, []).option("--hooks", "Auto-install git hooks without prompting").action(await withCwdValidation(initCommand));
 program.command("sync").description("Fetch sources, discover features, and sync files").option("--cwd <path>", "Override the working directory").action(await withCwdValidation(syncCommand));
 program.command("update").description("Fetch latest changes for all remote sources").option("--cwd <path>", "Override the working directory").action(await withCwdValidation(updateCommand));
+program.command("opt-out").description("Remove Agent Bridge hooks, synced files, and .agent-bridge state").option("--cwd <path>", "Override the working directory").action(await withCwdValidation(optOutCommand));
 program.parse();
 //#endregion
 export {};

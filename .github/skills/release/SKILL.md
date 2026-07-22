@@ -87,9 +87,28 @@ Use the highest-impact change. For pre-1.0 versions, breaking changes bump MINOR
 - Use current version + `-dev.{short SHA}` → `0.4.0-dev.abc1234`
 - Does NOT modify package.json
 
-### 5. Update version (skip for dev releases)
+### 5. Update version via a PR (skip for dev releases)
+
+> **`main` is protected — no direct pushes.** The version-bump commit must land through a
+> pull request. Do NOT run `git push` against `main`.
+
+First decide where the bump commit goes:
 
 ```bash
+git rev-parse --abbrev-ref HEAD   # current branch
+gh pr status                      # is there already a PR for it?
+```
+
+- **Already on a feature branch with an open PR** → add the bump commit to that branch and merge
+  the existing PR. Skip the `checkout main`/`checkout -b` lines below; run `npm version …` onward
+  on the current branch, then `git push` (no `-u`) and `gh pr merge --merge --delete-branch`.
+- **On `main` (or a branch with no PR)** → branch off `main` for a dedicated release PR:
+
+```bash
+# Branch off main for the release
+git checkout main && git pull --ff-only
+git checkout -b "chore/release-v<new-version>"
+
 # Update package.json version (this may trigger lifecycle scripts like "version")
 npm version <new-version> --no-git-tag-version
 
@@ -97,23 +116,40 @@ npm version <new-version> --no-git-tag-version
 # and any files produced by lifecycle scripts like the "version" script)
 git add -A
 
-# Commit the version bump
+# Commit the version bump and push the branch
 git commit -m "chore(release): v<new-version>"
+git push -u origin "chore/release-v<new-version>"
+
+# Open and merge the release PR (self-merge is allowed, no approval required)
+gh pr create --base main --title "chore(release): v<new-version>" --fill
+gh pr merge --merge --delete-branch
 ```
 
 > **Note:** The `npm version` command triggers the `version` lifecycle script if defined in package.json.
 > This project's `version` script rebuilds `dist/` and stages it. Always use `git add -A` to capture
 > all side effects (lockfile updates, rebuilt artifacts, etc.).
+>
+> If the release changes are small and already under review, you may instead fold the version-bump
+> commit into that existing PR rather than opening a separate one.
 
 ### 6. Create and push tag
 
+The tag must point at the **merged commit on `main`**, so tag only after the PR merges.
+
 ```bash
-# Create annotated tag
+# Sync main to the merged release commit
+git checkout main && git pull --ff-only
+
+# Create annotated tag on main
 git tag -a "v<version>" -m "Release v<version>"
 
-# Push commit and tag
-git push && git push origin "v<version>"
+# Push the tag (branch protection blocks branch pushes, not tags —
+# unless a tag ruleset also covers v* tags, in which case create the tag another way)
+git push origin "v<version>"
 ```
+
+> **Dev releases** skip the PR entirely: they don't modify `package.json`, so just tag the current
+> commit and push the tag (steps 6–7).
 
 ### 7. Create GitHub release
 
@@ -223,4 +259,5 @@ Command: release dev
 
 - `gh` CLI installed and authenticated (`gh auth status`)
 - Clean working directory (no uncommitted changes)
-- Push access to the repository
+- Permission to open and merge PRs (`main` is protected; version bumps land via PR, self-merge allowed)
+- Push access for tags (verify no `v*` tag ruleset blocks tag pushes)

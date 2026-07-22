@@ -73,18 +73,19 @@ Running `agent-bridge opt-out` performs a non-interactive cleanup for the curren
 
 - Removes entries tracked in `.agentbridge` manifests (feature and tool-root entries)
 - Removes Agent Bridge-managed git hooks (`post-checkout`, `post-merge`)
-- Deletes `.agent-bridge/` (config and cloned sources)
-- Writes a `.agent-bridge.optout` tombstone at the repo root
+- Removes `config.yml` and cloned sources from `.agent-bridge/`
+- Leaves a `.agent-bridge/optout` tombstone behind
 
 `opt-out` intentionally does not remove root files (`AGENTS.md`, `CLAUDE.md`, `SYSTEM.md`) even when they carry the managed marker.
 
 ### The opt-out tombstone
 
-Deleting `.agent-bridge/` alone is not durable: a `postinstall` guard such as `test -d .agent-bridge || (init && sync)` would treat the missing directory as "not installed" and reinstall on the next `npm install`. The `.agent-bridge.optout` marker breaks that loop:
+Wiping `.agent-bridge/` entirely is not durable: a `postinstall` guard such as `test -d .agent-bridge || (init && sync)` would treat the missing directory as "not installed" and reinstall on the next `npm install`. Instead, `opt-out` keeps the directory and writes a `.agent-bridge/optout` tombstone:
 
-- While it exists, `agent-bridge init` and `agent-bridge sync` are no-ops (they log and exit 0).
-- `agent-bridge init --force` deletes the marker and re-initializes (deliberate re-opt-in).
-- Commit the marker for a repo-wide opt-out; gitignore it to keep opt-out local to a single machine.
+- The directory persists, so `test -d .agent-bridge` stays true and the guard above short-circuits.
+- If a guard calls `init`/`sync` directly, both no-op while the tombstone exists (they log and exit 0).
+- `agent-bridge init --force` deletes the tombstone and re-initializes (deliberate re-opt-in).
+- The tombstone lives inside `.agent-bridge/`, which is gitignored except for `config.yml` — so it's local to a machine by default. Force-add it (`git add -f`) for a repo-wide opt-out.
 
 ## Root Files
 

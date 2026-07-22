@@ -115,25 +115,25 @@ agent-bridge opt-out
 `opt-out` is non-interactive and removes Agent Bridge from the current repository by:
 - Removing synced feature and tool-root entries tracked in `.agentbridge` manifests
 - Removing Agent Bridge-managed git hooks (`post-checkout`, `post-merge`)
-- Deleting `.agent-bridge/` (including `config.yml` and cloned sources)
-- Writing a `.agent-bridge.optout` marker so a `postinstall` guard won't silently reinstall
+- Removing `config.yml` and cloned sources from `.agent-bridge/`
+- Leaving a `.agent-bridge/optout` tombstone behind so a `postinstall` guard won't silently reinstall
 
 Notes:
 - Root files like `AGENTS.md`, `CLAUDE.md`, and `SYSTEM.md` are not removed by `opt-out`.
 - Existing non-Agent-Bridge hooks are preserved.
-- While `.agent-bridge.optout` exists, `agent-bridge init` and `agent-bridge sync` are no-ops.
-- Commit `.agent-bridge.optout` for a repo-wide opt-out, or gitignore it to keep opt-out local to your machine.
-- To re-enable, run `agent-bridge init --force` (which clears the marker) or delete `.agent-bridge.optout`.
+- The tombstone lives at `.agent-bridge/optout` and is **gitignored by default**, so opt-out is local to your machine. Force-add it (`git add -f .agent-bridge/optout`) to commit a repo-wide opt-out.
+- While the tombstone exists, `agent-bridge init` and `agent-bridge sync` are no-ops.
+- To re-enable, run `agent-bridge init --force` (which clears the tombstone) or delete `.agent-bridge/optout`.
 
 #### Opting out with a `postinstall` hook
 
-If a project auto-installs Agent Bridge via `postinstall`, guard it on `.agent-bridge` so the marker is respected:
+If a project auto-installs Agent Bridge via `postinstall`, guard it on `.agent-bridge`:
 
 ```json
 "postinstall": "test -d .agent-bridge || (npx agent-bridge init --domains … --tools … --source … --hooks && npx agent-bridge sync) || true"
 ```
 
-After `opt-out`, `init`/`sync` still run on the next install but no-op because of the marker — nothing is reinstalled.
+Because `opt-out` keeps the `.agent-bridge/` directory (holding only the tombstone), `test -d .agent-bridge` stays true after opting out and the guard short-circuits — nothing is reinstalled. If your guard invokes `init`/`sync` directly instead, they still no-op on the tombstone.
 
 ## Git Hooks (Auto-Sync)
 

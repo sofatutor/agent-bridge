@@ -1,5 +1,5 @@
 import * as p from '@clack/prompts';
-import { loadConfig } from '../lib/config.js';
+import { loadConfig, isOptedOut, OPT_OUT_MARKER } from '../lib/config.js';
 import { findRepoRoot } from '../lib/git.js';
 import { runMigrations } from '../lib/migrations/index.js';
 import {
@@ -27,6 +27,13 @@ export async function syncCommand(cwd?: string, _opts?: unknown): Promise<void> 
   const repoRoot = cwd ?? findRepoRoot();
 
   p.intro('Agent Bridge Sync');
+
+  // Respect an opt-out tombstone so a postinstall guard doesn't re-sync.
+  if (await isOptedOut(repoRoot)) {
+    p.log.warn(`${OPT_OUT_MARKER} present — Agent Bridge is opted out. Skipping sync.`);
+    p.outro('Skipped (opted out).');
+    return;
+  }
 
   const s = p.spinner();
 

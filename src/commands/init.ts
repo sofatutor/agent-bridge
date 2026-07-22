@@ -5,6 +5,9 @@ import {
   isRemoteSource,
   loadConfig,
   saveConfig,
+  isOptedOut,
+  removeOptOutMarker,
+  OPT_OUT_MARKER,
   type BridgeConfig,
   type ToolConfig,
   type SourceConfig,
@@ -122,6 +125,20 @@ export async function initCommand(
   opts?: InitOptions
 ): Promise<void> {
   const repoRoot = cwd ?? findRepoRoot();
+
+  // Respect an opt-out tombstone so a postinstall guard doesn't reinstall.
+  // `--force` clears it (deliberate re-opt-in).
+  if (await isOptedOut(repoRoot)) {
+    if (opts?.force) {
+      await removeOptOutMarker(repoRoot);
+    } else {
+      p.log.warn(
+        `${OPT_OUT_MARKER} present — Agent Bridge is opted out. ` +
+          `Skipping init. Delete the file or run with --force to re-enable.`
+      );
+      return;
+    }
+  }
 
   const hasToolsArg = !!opts?.tools;
   const hasSourceArg = !!(opts?.source && opts.source.length > 0);

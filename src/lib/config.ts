@@ -1,4 +1,4 @@
-import { readFile, writeFile, access, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, access, mkdir, rm } from 'node:fs/promises';
 import { join, isAbsolute } from 'node:path';
 import yaml from 'js-yaml';
 import { z } from 'zod';
@@ -132,6 +132,14 @@ export type BridgeConfig = z.infer<typeof bridgeConfigSchema>;
 export const BRIDGE_DIR = '.agent-bridge';
 export const CONFIG_FILENAME = 'config.yml';
 
+/**
+ * Tombstone written by `opt-out` that survives `.agent-bridge/` deletion.
+ * `init`/`sync` honor it so a `postinstall` guard doesn't silently reinstall
+ * Agent Bridge on the next `npm install`. Commit it for a repo-wide opt-out,
+ * or gitignore it to keep opt-out local to your machine.
+ */
+export const OPT_OUT_MARKER = '.agent-bridge.optout';
+
 // ---------------------------------------------------------------------------
 // Source type detection
 // ---------------------------------------------------------------------------
@@ -169,6 +177,34 @@ export function configPath(repoRoot: string): string {
 
 export function sourceDir(repoRoot: string, sourceName: string): string {
   return join(repoRoot, BRIDGE_DIR, sourceName);
+}
+
+export function optOutMarkerPath(repoRoot: string): string {
+  return join(repoRoot, OPT_OUT_MARKER);
+}
+
+/** Whether an opt-out tombstone is present at the repo root. */
+export async function isOptedOut(repoRoot: string): Promise<boolean> {
+  try {
+    await access(optOutMarkerPath(repoRoot));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Write the opt-out tombstone. */
+export async function writeOptOutMarker(repoRoot: string): Promise<void> {
+  await writeFile(
+    optOutMarkerPath(repoRoot),
+    '# Agent Bridge opt-out marker. Remove this file (or run `agent-bridge init --force`) to re-enable.\n',
+    'utf-8'
+  );
+}
+
+/** Remove the opt-out tombstone if present (idempotent). */
+export async function removeOptOutMarker(repoRoot: string): Promise<void> {
+  await rm(optOutMarkerPath(repoRoot), { force: true });
 }
 
 // ---------------------------------------------------------------------------

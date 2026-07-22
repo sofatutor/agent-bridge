@@ -6,6 +6,7 @@ import { Command } from 'commander';
 import { initCommand } from './commands/init.js';
 import { syncCommand } from './commands/sync.js';
 import { updateCommand } from './commands/update.js';
+import { optOutCommand } from './commands/opt-out.js';
 import { VERSION } from './lib/version.js';
 
 export interface CliOptions {
@@ -76,5 +77,11 @@ program
   .description('Fetch latest changes for all remote sources')
   .option('--cwd <path>', 'Override the working directory')
   .action(await withCwdValidation(updateCommand));
+
+program
+  .command('opt-out')
+  .description('Remove Agent Bridge hooks, synced files, and .agent-bridge state')
+  .option('--cwd <path>', 'Override the working directory')
+  .action(await withCwdValidation(optOutCommand));
 
 program.parse();

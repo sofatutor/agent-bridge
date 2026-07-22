@@ -133,12 +133,13 @@ export const BRIDGE_DIR = '.agent-bridge';
 export const CONFIG_FILENAME = 'config.yml';
 
 /**
- * Tombstone written by `opt-out` that survives `.agent-bridge/` deletion.
- * `init`/`sync` honor it so a `postinstall` guard doesn't silently reinstall
- * Agent Bridge on the next `npm install`. Commit it for a repo-wide opt-out,
- * or gitignore it to keep opt-out local to your machine.
+ * Tombstone written by `opt-out`. It lives inside `.agent-bridge/` so it's
+ * gitignored by default (the directory's `.gitignore` ignores everything but
+ * `config.yml`), keeping opt-out local to a machine. `init`/`sync` honor it so
+ * a `postinstall` guard doesn't silently reinstall Agent Bridge on the next
+ * `npm install`. Force-add it (`git add -f`) to commit a repo-wide opt-out.
  */
-export const OPT_OUT_MARKER = '.agent-bridge.optout';
+export const OPT_OUT_MARKER = join(BRIDGE_DIR, 'optout');
 
 // ---------------------------------------------------------------------------
 // Source type detection
@@ -193,8 +194,19 @@ export async function isOptedOut(repoRoot: string): Promise<boolean> {
   }
 }
 
-/** Write the opt-out tombstone. */
+/**
+ * Write the opt-out tombstone inside `.agent-bridge/`. Recreates the directory
+ * (opt-out deletes it) and its `.gitignore` so the marker is ignored by default.
+ */
 export async function writeOptOutMarker(repoRoot: string): Promise<void> {
+  const dir = bridgeDir(repoRoot);
+  await mkdir(dir, { recursive: true });
+  // Same ignore rules init/sync write: ignore everything but the config.
+  await writeFile(
+    join(dir, '.gitignore'),
+    ['# Ignore cloned sources', '*', '!config.yml', '!.gitignore'].join('\n') + '\n',
+    'utf-8'
+  );
   await writeFile(
     optOutMarkerPath(repoRoot),
     '# Agent Bridge opt-out marker. Remove this file (or run `agent-bridge init --force`) to re-enable.\n',

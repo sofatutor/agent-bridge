@@ -128,13 +128,31 @@ describe('optOutCommand', () => {
     }
     expect(exists).toBe(false);
 
+    // Config and cloned sources are gone, but .agent-bridge/ remains to hold
+    // the opt-out tombstone (gitignored by default).
     exists = true;
     try {
-      await access(join(repoRoot, '.agent-bridge'));
+      await access(join(repoRoot, '.agent-bridge', 'config.yml'));
     } catch {
       exists = false;
     }
     expect(exists).toBe(false);
+
+    exists = true;
+    try {
+      await access(join(repoRoot, OPT_OUT_MARKER));
+    } catch {
+      exists = false;
+    }
+    expect(exists).toBe(true);
+
+    exists = true;
+    try {
+      await access(join(repoRoot, '.agent-bridge', '.gitignore'));
+    } catch {
+      exists = false;
+    }
+    expect(exists).toBe(true);
 
     const userOwned = await readFile(
       join(repoRoot, '.github', 'skills', 'user-note.md'),

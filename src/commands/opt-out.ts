@@ -94,7 +94,8 @@ export async function optOutCommand(
   // guard (or a manual init/sync) won't silently reinstall on the next install.
   await writeOptOutMarker(repoRoot);
   p.log.info(
-    `Wrote ${OPT_OUT_MARKER}. Commit it for a repo-wide opt-out, or gitignore it to keep opt-out local. ` +
+    `Wrote ${OPT_OUT_MARKER} (gitignored, local to this machine). ` +
+      'Force-add it (`git add -f`) for a repo-wide opt-out. ' +
       'Run `agent-bridge init --force` to re-enable.'
   );
 

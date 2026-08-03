@@ -1,0 +1,57 @@
+version: 2
+
+updates:
+  # ===========================================
+  # npm - Main package dependencies
+  # ===========================================
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Europe/Berlin"
+    open-pull-requests-limit: 0
+    assignees:
+      - "NourEldinShobier"
+      - "mfittko"
+    labels:
+      - "dependencies"
+      - "javascript"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      types:
+        patterns:
+          - "@types/*"
+        dependency-type: "development"
+      testing:
+        patterns:
+          - "vite-plus"
+          - "vitest*"
+        dependency-type: "development"
+
+  # ===========================================
+  # GitHub Actions
+  # ===========================================
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Europe/Berlin"
+    open-pull-requests-limit: 0
+    assignees:
+      - "NourEldinShobier"
+      - "mfittko"
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "ci"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      actions:
+        patterns:
+          - "*"

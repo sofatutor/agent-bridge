@@ -1,6 +1,6 @@
 {
   "name": "@sofatutor/agent-bridge",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "description": "Sync AI agent configurations (skills, agents, prompts) from shared sources into your project's tool directories.",
   "license": "MIT",
   "repository": {

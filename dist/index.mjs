@@ -642,7 +642,7 @@ async function removeStaleSourceDirs(repoRoot, config) {
 }
 //#endregion
 //#region src/lib/version.ts
-const VERSION = "0.13.0";
+const VERSION = "0.13.1";
 //#endregion
 //#region src/commands/init.ts
 const WELL_KNOWN_TOOLS = [

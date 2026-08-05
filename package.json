@@ -1,6 +1,12 @@
 {
   "name": "@sofatutor/agent-bridge",
   "version": "0.13.0",
+  "description": "Sync AI agent configurations (skills, agents, prompts) from shared sources into your project's tool directories.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sofatutor/agent-bridge.git"
+  },
   "type": "module",
   "main": "dist/index.mjs",
   "types": "dist/index.d.mts",
@@ -10,12 +16,15 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "vp pack",
     "check": "vp run typecheck && vp test",
     "check:viteplus": "vp check",
     "dev": "vp pack --watch",
-    "prepare": "vp pack",
+    "prepack": "vp pack",
     "version": "vp pack && git add dist",
     "test": "vp test",
     "test:watch": "vp test watch",

@@ -1,17 +1,18 @@
 ---
 name: release
-description: Create GitHub releases with semantic versioning. Use this skill when the user says "release", "/release", "create release", "release beta", "release dev", or wants to tag and publish a version to GitHub. This creates git tags and GitHub releases for installing via github:user/repo#tag.
+description: Release a new version — bump, tag, GitHub release, and npm publish. Use this skill when the user says "release", "/release", "create release", "publish", "release beta", "release dev", or wants to ship a new version of the package.
 ---
 
 # Release Skill
 
-Create GitHub releases with git tags for version-specific installation via:
+Bump the version, tag it, create the GitHub release, and publish to npm:
 
 ```
-"@sofatutor/agent-bridge": "github:sofatutor/agent-bridge#v1.0.0"
+"@sofatutor/agent-bridge": "^1.0.0"
 ```
 
-> **Note:** This skill is for GitHub releases (tags). For npm publishing, use the `publish` skill.
+> Consumers install from the npm registry. Git installs (`github:sofatutor/agent-bridge#v1.0.0`)
+> still work — `dist/` is committed — but are no longer the documented path.
 
 ## Release Types
 
@@ -164,26 +165,60 @@ gh release create "v<version>" --title "v<version>" --generate-notes --prereleas
 gh release create "v<version>" --title "v<version>" --prerelease --notes "Development snapshot from commit $(git rev-parse --short HEAD)"
 ```
 
-### 8. Show install command
+### 8. Publish to npm
+
+Publish from the tagged commit on `main` (skip for dev releases — snapshots stay on GitHub only).
+
+```bash
+git status --porcelain          # must be clean; abort otherwise
+npm whoami                      # must print a user with @sofatutor org access; else: npm login
+
+# Stable
+npm publish                     # prepack rebuilds dist/; publishConfig sets --access public
+
+# Beta (keep `latest` pointing at the last stable)
+npm publish --tag beta
+```
+
+Verify, then confirm to the user:
+
+```bash
+npm view @sofatutor/agent-bridge version dist-tags
+```
+
+> **Never** add a `prepare` script back — npm runs `prepare` on git installs, which would build
+> the toolchain inside every consumer's `npm install`. `prepack` only runs on `npm pack`/`npm publish`.
+>
+> Publishing is not reversible: a version number can never be reused, and unpublish is only allowed
+> within 72 hours. Run `npm publish --dry-run` first if anything about the tarball is uncertain.
+
+### 9. Show install command
 
 After the release is complete, always show the user the install commands.
 
-**For stable releases**, recommend the semver syntax (auto-updates within range, avoids npm caching issues with pinned git tags):
+**For stable releases:**
+
+```
+✓ Released v<version> and published to npm
+
+Install via:
+"@sofatutor/agent-bridge": "^<version>"
+```
+
+**For beta releases** (published under the `beta` tag, so ranges won't pick it up):
 
 ```
 ✓ Released v<version>
 
-Install via (recommended — auto-updates on npm install):
-"@sofatutor/agent-bridge": "github:sofatutor/agent-bridge#semver:^<version>"
-
-Or pin to this exact version:
-"@sofatutor/agent-bridge": "github:sofatutor/agent-bridge#v<version>"
+Install via:
+"@sofatutor/agent-bridge": "<version>"     # exact version
+npm install --save-dev @sofatutor/agent-bridge@beta
 ```
 
-**For beta/dev releases**, always pin to the exact tag (semver ranges won't match prereleases):
+**For dev releases** (GitHub tag only, not published to npm):
 
 ```
-✓ Released v<version>
+✓ Released v<version> (GitHub only)
 
 Install via:
 "@sofatutor/agent-bridge": "github:sofatutor/agent-bridge#v<version>"
@@ -237,16 +272,17 @@ Command: release dev
 
 ```json
 {
-  "dependencies": {
-    "@sofatutor/agent-bridge": "github:sofatutor/agent-bridge#semver:^0.4.0",
-    "@sofatutor/agent-bridge": "github:sofatutor/agent-bridge#v0.4.0",
-    "@sofatutor/agent-bridge": "github:sofatutor/agent-bridge#v0.5.0-beta.1",
+  "devDependencies": {
+    "@sofatutor/agent-bridge": "^0.4.0",
+    "@sofatutor/agent-bridge": "0.5.0-beta.1",
     "@sofatutor/agent-bridge": "github:sofatutor/agent-bridge#v0.4.0-dev.abc1234"
   }
 }
 ```
 
-**Note on npm caching:** When using a pinned tag (`#v0.4.0`), npm caches the resolved commit SHA in `package-lock.json` and won't pick up new releases on `npm install`. Use the `#semver:^x.y.z` syntax instead so npm resolves tags as semver and updates within the range. To force an update from a pinned tag, run `npm uninstall @sofatutor/agent-bridge && npm install github:sofatutor/agent-bridge#v<new-version>`.
+Registry installs record an `integrity` hash in the consumer's lockfile and run no build scripts.
+Git installs do neither (npm prints `skipping integrity check for git dependency`), so only use
+them for dev snapshots.
 
 ## Edge Cases
 
@@ -254,6 +290,8 @@ Command: release dev
 - **No package.json**: Abort with error — this skill requires a package.
 - **gh CLI not installed**: Provide manual instructions for creating the release on GitHub.
 - **Tag already exists**: Abort and inform user. They must delete the tag first if re-releasing.
+- **Version already on npm**: `npm publish` fails with `EPUBLISHCONFLICT`. Published versions can never be reused — bump to the next patch instead.
+- **`npm whoami` fails / no org access**: stop after the GitHub release and tell the user to run `npm login` (needs @sofatutor org membership); the npm publish can be re-run later from the tag.
 
 ## Prerequisites
 
@@ -261,3 +299,4 @@ Command: release dev
 - Clean working directory (no uncommitted changes)
 - Permission to open and merge PRs (`main` is protected; version bumps land via PR, self-merge allowed)
 - Push access for tags (verify no `v*` tag ruleset blocks tag pushes)
+- `npm login` done, with publish rights on the `@sofatutor` npm org (`npm whoami` + `npm org ls sofatutor`)

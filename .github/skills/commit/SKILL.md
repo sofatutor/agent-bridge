@@ -32,6 +32,17 @@ Create conventional commits following the conventional commits specification.
 
 4. **Offer to push** — After all commits, ask if the user wants to push, then run `git push` if confirmed.
 
+   > **`main` is protected — direct pushes are rejected.** If the commits were made on `main`,
+   > move them to a branch and open a PR instead:
+   >
+   > ```bash
+   > git branch <type>/<short-description>          # branch at current commits
+   > git reset --hard origin/main                   # rewind main
+   > git checkout <type>/<short-description>
+   > git push -u origin <type>/<short-description>
+   > gh pr create --base main --fill
+   > ```
+
 ## When to Split Commits
 
 **Split into separate commits:**

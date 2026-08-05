@@ -11,16 +11,19 @@ Bump the version, tag it, create the GitHub release, and publish to npm:
 "@sofatutor/agent-bridge": "^1.0.0"
 ```
 
-> Consumers install from the npm registry. Git installs (`github:sofatutor/agent-bridge#v1.0.0`)
-> still work — `dist/` is committed — but are no longer the documented path.
+> Consumers install from the npm registry only. `dist/` is not committed, so a git ref installs
+> a package with no build output.
 
 ## Release Types
 
-| Command        | Example Output     | Description               |
-| -------------- | ------------------ | ------------------------- |
-| `release`      | v0.4.0             | Stable release            |
-| `release beta` | v0.4.0-beta.1      | Beta prerelease           |
-| `release dev`  | v0.4.0-dev.abc1234 | Dev snapshot (commit SHA) |
+| Command        | Example Output     | Description                                       |
+| -------------- | ------------------ | ------------------------------------------------- |
+| `release`      | v0.4.0             | Stable release, npm `latest`                      |
+| `release beta` | v0.4.0-beta.1      | Beta prerelease, npm `beta`                       |
+| `release dev`  | v0.4.0-dev.abc1234 | Dev snapshot, npm `dev` tag (no tag, no GH release) |
+
+> `dist/` is not committed — it is built by `prepack` at publish time. So **every** release goes
+> through npm; a git ref (`github:sofatutor/agent-bridge#<ref>`) installs without a usable build.
 
 ## Workflow
 
@@ -126,9 +129,8 @@ gh pr create --base main --title "chore(release): v<new-version>" --fill
 gh pr merge --merge --delete-branch
 ```
 
-> **Note:** The `npm version` command triggers the `version` lifecycle script if defined in package.json.
-> This project's `version` script rebuilds `dist/` and stages it. Always use `git add -A` to capture
-> all side effects (lockfile updates, rebuilt artifacts, etc.).
+> **Note:** `npm version` also updates `package-lock.json`, hence `git add -A`. It triggers a
+> `version` lifecycle script if one is defined — this project has none, and `dist/` is gitignored.
 >
 > If the release changes are small and already under review, you may instead fold the version-bump
 > commit into that existing PR rather than opening a separate one.
@@ -149,8 +151,8 @@ git tag -a "v<version>" -m "Release v<version>"
 git push origin "v<version>"
 ```
 
-> **Dev releases** skip the PR entirely: they don't modify `package.json`, so just tag the current
-> commit and push the tag (steps 6–7).
+> **Dev releases** skip steps 5–7 entirely — no version bump, no tag, no GitHub release. Go straight
+> to step 8 and publish a prerelease under the `dev` tag.
 
 ### 7. Create GitHub release
 
@@ -167,18 +169,25 @@ gh release create "v<version>" --title "v<version>" --prerelease --notes "Develo
 
 ### 8. Publish to npm
 
-Publish from the tagged commit on `main` (skip for dev releases — snapshots stay on GitHub only).
+Publish from the tagged commit on `main` (dev releases publish from the current commit).
 
 ```bash
 git status --porcelain          # must be clean; abort otherwise
 npm whoami                      # must print a user with @sofatutor org access; else: npm login
 
 # Stable
-npm publish                     # prepack rebuilds dist/; publishConfig sets --access public
+npm publish                     # prepack builds dist/; publishConfig sets --access public
 
 # Beta (keep `latest` pointing at the last stable)
 npm publish --tag beta
+
+# Dev snapshot: version it by commit SHA, publish under `dev`, leave package.json untouched
+npm version "$(node -p "require('./package.json').version")-dev.$(git rev-parse --short HEAD)" --no-git-tag-version
+npm publish --tag dev
+git checkout package.json package-lock.json
 ```
+
+npm may prompt for a one-time password; pass `--otp=<code>` if it does.
 
 Verify, then confirm to the user:
 
@@ -215,13 +224,13 @@ Install via:
 npm install --save-dev @sofatutor/agent-bridge@beta
 ```
 
-**For dev releases** (GitHub tag only, not published to npm):
+**For dev snapshots** (published under the `dev` tag, no git tag, no GitHub release):
 
 ```
-✓ Released v<version> (GitHub only)
+✓ Published <version>-dev.<sha> to npm under the `dev` tag
 
 Install via:
-"@sofatutor/agent-bridge": "github:sofatutor/agent-bridge#v<version>"
+npm install --save-dev @sofatutor/agent-bridge@dev
 ```
 
 ## Examples
@@ -235,6 +244,7 @@ Command: release
 → Bumps to 0.4.0 (feat = minor bump)
 → Creates tag v0.4.0
 → Creates GitHub release v0.4.0
+→ Publishes @sofatutor/agent-bridge@0.4.0 to npm (`latest`)
 ```
 
 **Example 2: Beta release**
@@ -246,6 +256,7 @@ Command: release beta
 → Bumps to 0.5.0-beta.1
 → Creates tag v0.5.0-beta.1
 → Creates GitHub prerelease v0.5.0-beta.1
+→ Publishes @sofatutor/agent-bridge@0.5.0-beta.1 to npm (`beta`)
 ```
 
 **Example 3: Promote beta to stable**
@@ -264,8 +275,8 @@ Command: release
 Current version: 0.4.0
 Current commit: abc1234
 Command: release dev
-→ Creates tag v0.4.0-dev.abc1234 (no package.json change)
-→ Creates GitHub prerelease v0.4.0-dev.abc1234
+→ Publishes @sofatutor/agent-bridge@0.4.0-dev.abc1234 to npm (`dev`)
+→ No git tag, no GitHub release, no package.json change
 ```
 
 ## Installation After Release
@@ -275,14 +286,14 @@ Command: release dev
   "devDependencies": {
     "@sofatutor/agent-bridge": "^0.4.0",
     "@sofatutor/agent-bridge": "0.5.0-beta.1",
-    "@sofatutor/agent-bridge": "github:sofatutor/agent-bridge#v0.4.0-dev.abc1234"
+    "@sofatutor/agent-bridge": "0.4.0-dev.abc1234"
   }
 }
 ```
 
 Registry installs record an `integrity` hash in the consumer's lockfile and run no build scripts.
-Git installs do neither (npm prints `skipping integrity check for git dependency`), so only use
-them for dev snapshots.
+Git installs do neither (npm prints `skipping integrity check for git dependency`) and, since
+`dist/` is gitignored, ship no build output at all — use the `dev` tag instead.
 
 ## Edge Cases
 

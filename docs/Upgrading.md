@@ -49,7 +49,7 @@ See [Configuration](Configuration.md). Manifests and sync behavior are unchanged
 
 ### `init` flow
 
-`init` now asks for tools and sources first, fetches the sources, and shows the actual domains in each one as a grouped checklist. The default domain list `backend,frontend,shared` is gone; non-interactive `init` without `--domains` takes every domain it finds.
+`init` now asks for tools and sources first, fetches the sources, and shows their actual contents as one checkbox tree (domain → feature type → feature). The default domain list `backend,frontend,shared` is gone; non-interactive `init` without `--domains` takes every domain it finds.
 
 ## Downgrading
 

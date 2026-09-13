@@ -1,0 +1,36 @@
+# Mirror docs/ to the GitHub wiki. docs/ is the source of truth; edit there.
+# One-time setup: create any page in the wiki UI so the wiki git repo exists.
+name: Publish wiki
+
+on:
+  push:
+    branches: [main]
+    paths: ['docs/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  wiki:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Push docs/ to wiki
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          git clone "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git" wiki
+          find wiki -maxdepth 1 -name '*.md' -delete
+          for f in docs/*.md; do
+            # Wiki links are page names without .md
+            sed -E 's/\]\(([A-Za-z0-9_-]+)\.md\)/](\1)/g' "$f" > "wiki/$(basename "$f")"
+          done
+          cd wiki
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "docs: sync from ${GITHUB_SHA::7}"
+          git push

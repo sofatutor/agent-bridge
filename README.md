@@ -14,7 +14,7 @@ That's it. The wizard walks you through three questions:
 
 1. **Tools** — VS Code, Cursor, Claude, Pi, or a custom folder.
 2. **Sources** — a Git URL (or local path) that holds your shared skills, e.g. `https://github.com/sofatutor/ai-hub.git`.
-3. **Domains** — tick the folders you want from each source. Optionally pick single skills/agents/files.
+3. **What to sync** — a tree of every domain in each source. Tick a domain to take all of it, or open it and tick single skills, agents or files.
 
 It saves `.agent-bridge/config.yml`, offers to install git hooks, and syncs immediately.
 

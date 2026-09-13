@@ -8,7 +8,7 @@ Sync AI agent skills, agents, prompts and instructions from a shared repo into y
 npx @sofatutor/agent-bridge init
 ```
 
-The wizard asks for **tools**, **sources**, then shows the **domains** inside each source so you can tick what you want. It saves `.agent-bridge/config.yml` and runs the first sync. Commit the config; run `agent-bridge sync` whenever you want the latest.
+The wizard asks for **tools**, **sources**, then shows a **tree** of every domain in each source: tick a domain for all of it, or open it and tick single skills, agents or files. It saves `.agent-bridge/config.yml` and runs the first sync. Commit the config; run `agent-bridge sync` whenever you want the latest.
 
 ## Pages
 

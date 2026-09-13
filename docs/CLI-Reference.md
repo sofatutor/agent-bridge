@@ -9,10 +9,22 @@ Interactive setup. Order of questions:
 1. **Tools** — multiselect: VS Code (`.github`), Cursor (`.cursor`), Claude (`.claude`), Pi (`.pi`), or custom `name` + `folder`.
 2. **Sources** — Git URL or local path, optional branch. Add as many as you like.
 3. Sources are fetched.
-4. **Domains** — one grouped checklist, one group per source. Toggle a source to take all its domains. Each domain shows a hint like `12 skills, 2 agents`.
-5. **Sync everything?** — Yes (default) syncs the full domains. No opens one checklist per selected domain, pre-ticked, where you deselect individual skills, agents, feature types or files.
-6. **Git hooks?** — install `post-checkout` / `post-merge` hooks that run `sync` in the background.
-7. **Run sync now?** — Yes by default.
+4. **What to sync** — one checkbox tree: source → domain → feature type → feature, plus a `files` group per domain.
+
+   ```
+   ◆  What do you want to sync?
+   │  ▾ ◧ ai-hub
+   │    ▸ ◼ sofatutor-shared (9 skills)
+   │    ▾ ◧ sofatutor-main (7 skills, 2 vscode--agents)
+   │      ▸ ◧ skills (7)
+   │      ▸ ◼ vscode--agents (2)
+   │    ▸ ◻ sofatutor-kids (10 skills)
+   └  space toggle · ←/→ collapse/expand · enter confirm
+   ```
+
+   Space ticks the node under the cursor and everything beneath it; a fully ticked domain is stored as "everything", partial picks become an `include` list. `→` opens a node, `←` closes it (or jumps to the parent).
+5. **Git hooks?** — install `post-checkout` / `post-merge` hooks that run `sync` in the background.
+6. **Run sync now?** — Yes by default.
 
 Re-running `init` overwrites the existing config. If a source has no domains selected it is dropped.
 

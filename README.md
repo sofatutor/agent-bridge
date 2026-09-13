@@ -89,7 +89,7 @@ sources:
     source: https://github.com/sofatutor/ai-hub.git
     branch: main
     domains:
-      - sofatutor-shared             # everything in this domain
+      - name: sofatutor-shared       # everything in this domain
       - name: sofatutor-main         # only these bits
         include:
           - skills/preview

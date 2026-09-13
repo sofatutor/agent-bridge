@@ -18,7 +18,7 @@ sources:
     source: https://github.com/sofatutor/ai-hub.git
     branch: main
     domains:
-      - sofatutor-shared               # everything in this domain
+      - name: sofatutor-shared         # everything in this domain
       - name: sofatutor-main           # only the listed paths
         include:
           - skills/preview             # one feature
@@ -27,7 +27,8 @@ sources:
 
   - name: local-experiments
     source: /absolute/path/to/folder   # local folders are read in place
-    domains: [playground]
+    domains:
+      - name: playground
 ```
 
 ## Fields
@@ -40,7 +41,7 @@ sources:
 | `sources[].name`             | Short unique name. Remote sources are cloned to `.agent-bridge/<name>/`.                      |
 | `sources[].source`           | Git URL (HTTPS/SSH) or **absolute** local path.                                               |
 | `sources[].branch`           | Branch to track. Remote sources only. Omit for the remote default.                            |
-| `sources[].domains[]`        | Domain folders to sync from this source. A bare string means "everything in it".              |
+| `sources[].domains[].name`   | Domain folder to sync from this source. A bare string is accepted as shorthand for `name`.   |
 | `sources[].domains[].include`| Paths inside the domain to sync. Omit to sync the whole domain. See below.                    |
 
 ## `include` paths

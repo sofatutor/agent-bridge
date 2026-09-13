@@ -29,8 +29,8 @@ sources:
   - name: hub
     source: https://github.com/org/hub.git
     domains:
-      - backend
-      - shared
+      - name: backend
+      - name: shared
 ```
 
 Behavior is identical: every listed domain, everything inside it. The old top-level form keeps loading as a fallback, so an un-migrated file never breaks.

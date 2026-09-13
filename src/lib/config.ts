@@ -87,8 +87,8 @@ const bridgeConfigSchema = z
   .object({
     version: z.string().optional(),
     /**
-     * Legacy (< 0.14): domains applied to every source. Still honored as the
-     * fallback for sources without their own `domains`.
+     * Union of all sources' domains, kept for Agent Bridge ≤ 0.13 which
+     * requires it. Also the fallback for sources without their own `domains`.
      */
     domains: z.array(safeName).optional(),
     tools: z.array(toolConfigSchema).min(1, "'tools' must be a non-empty array"),
@@ -338,7 +338,15 @@ export async function saveConfig(
 ): Promise<void> {
   const dir = bridgeDir(repoRoot);
   await mkdir(dir, { recursive: true });
-  const content = yaml.dump(config, { lineWidth: -1, noRefs: true, skipInvalid: true });
+  // Always write a top-level `domains` list (union of every source's domains).
+  // Agent Bridge ≤ 0.13 requires it and ignores `sources[].domains`, so a
+  // config written by this version still loads on older installs during a
+  // mixed-version rollout (they sync whole domains, without `include`).
+  const legacyDomains = [
+    ...new Set(config.sources.flatMap((s) => sourceDomains(config, s).map((d) => d.name))),
+  ];
+  const out = { ...config, domains: legacyDomains.length > 0 ? legacyDomains : config.domains };
+  const content = yaml.dump(out, { lineWidth: -1, noRefs: true, skipInvalid: true });
   await writeFile(configPath(repoRoot), content, 'utf-8');
 }
 

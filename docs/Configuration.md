@@ -67,18 +67,15 @@ No `include` = the whole domain. An empty domain folder or a path that doesn't e
 | **SSH Git**    | `git@github.com:org/repo.git`      | Same as HTTPS                                          |
 | **Local path** | `/absolute/path/to/repo`           | Read directly. Must be absolute (`init` resolves relative input for you) |
 
-## Legacy: top-level `domains`
+## Top-level `domains` (compatibility)
 
-Configs written before 0.14 list domains once, for all sources:
+You will also see a top-level list in every file Agent Bridge writes:
 
 ```yaml
-domains: [backend, frontend, shared]
-sources:
-  - name: hub
-    source: https://github.com/org/hub.git
+domains: [agent-dna, sofatutor-shared, sofatutor-main]
 ```
 
-This still works: a source without its own `domains` falls back to the top-level list, syncing everything in those domains. The first `sync` after upgrading moves the list into every source automatically. See [Upgrading](Upgrading.md).
+It is the union of all `sources[].domains` names and is regenerated on every save. Agent Bridge ≤ 0.13 requires it (and ignores the per-source lists), so teammates who haven't upgraded yet keep working during a rollout: they sync those whole domains, without `include` filtering. Newer versions only use it as a fallback for a source that has no `domains` of its own. You don't need to maintain it by hand.
 
 ## Version & migrations
 

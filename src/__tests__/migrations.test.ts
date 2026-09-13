@@ -319,13 +319,14 @@ describe('migration 0.14.0', () => {
     await saveConfig(repoRoot, await m014.migrate(repoRoot, legacy));
 
     const loaded = await loadConfig(repoRoot);
-    expect(loaded.domains).toBeUndefined();
+    // Kept for CLIs ≤ 0.13, which require the top-level list
+    expect(loaded.domains).toEqual(['shared', 'backend']);
     expect(loaded.sources[0].domains).toEqual([{ name: 'shared' }, { name: 'backend' }]);
     expect(loaded.sources[1].domains).toEqual([{ name: 'shared' }, { name: 'backend' }]);
 
     const raw = await readFile(join(repoRoot, '.agent-bridge', 'config.yml'), 'utf-8');
     expect(raw).toContain('- name: shared');
-    expect(raw).not.toMatch(/^domains:/m);
+    expect(raw).toMatch(/^domains:/m);
   });
 
   it('leaves sources that already have their own domains untouched', async () => {

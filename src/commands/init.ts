@@ -8,6 +8,8 @@ import {
   isOptedOut,
   removeOptOutMarker,
   OPT_OUT_MARKER,
+  isIncluded,
+  sourceDomains,
   type BridgeConfig,
   type DomainConfig,
   type ToolConfig,
@@ -294,13 +296,20 @@ async function promptSources(repoRoot: string): Promise<SourceConfig[]> {
 async function promptSelection(
   repoRoot: string,
   sources: SourceConfig[],
-  toolNames: string[]
+  toolNames: string[],
+  /** Existing config whose selection should start ticked (re-run of init). */
+  current?: BridgeConfig
 ): Promise<Map<string, DomainConfig[]>> {
   // Leaf value: `<source>\u0000<domain>\u0000<relPath>`; a domain with no
   // syncable content becomes a leaf with an empty relPath (= whole domain).
   const SEP = '\u0000';
   const contentsByKey = new Map<string, Awaited<ReturnType<typeof listDomainContents>>>();
   const tree: TreeNode[] = [];
+  const initialValues: string[] = [];
+  const currentDomain = (sourceName: string, domain: string): DomainConfig | undefined => {
+    const src = current?.sources.find((s) => s.name === sourceName);
+    return src && sourceDomains(current!, src).find((d) => d.name === domain);
+  };
 
   for (const source of sources) {
     const srcPath = resolveSourcePath(repoRoot, source);
@@ -314,16 +323,22 @@ async function promptSelection(
       const contents = await listDomainContents(srcPath, domain, toolNames);
       contentsByKey.set(`${source.name}${SEP}${domain}`, contents);
       const prefix = `${source.name}${SEP}${domain}${SEP}`;
+      const existing = currentDomain(source.name, domain);
+      const leaf = (rel: string): TreeNode => {
+        if (existing && isIncluded(existing, rel)) initialValues.push(`${prefix}${rel}`);
+        return { label: rel.includes('/') ? rel.slice(rel.indexOf('/') + 1) : rel, value: `${prefix}${rel}` };
+      };
       const children: TreeNode[] = contents.featureTypes
         .filter((ft) => ft.features.length > 0)
         .map((ft) => ({
           label: ft.name,
           hint: `(${ft.features.length})`,
-          children: ft.features.map((f) => ({ label: f, value: `${prefix}${ft.name}/${f}` })),
+          children: ft.features.map((f) => leaf(`${ft.name}/${f}`)),
         }));
       if (contents.files.length > 0) {
-        children.push({ label: 'files', children: contents.files.map((f) => ({ label: f, value: `${prefix}${f}` })) });
+        children.push({ label: 'files', children: contents.files.map((f) => leaf(f)) });
       }
+      if (children.length === 0 && existing) initialValues.push(prefix);
       const hint = contents.featureTypes
         .filter((ft) => ft.features.length > 0)
         .map((ft) => `${ft.features.length} ${ft.name}`)
@@ -346,6 +361,7 @@ async function promptSelection(
     message: 'What do you want to sync? Tick a domain to take all of it, or open it and pick pieces.',
     tree,
     expandDepth: 1,
+    initialValues,
     required: true,
   });
   cancelled(picked);
@@ -442,22 +458,30 @@ export async function initCommand(cwd?: string, opts?: InitOptions): Promise<voi
   // --- Interactive mode ---
   p.intro('Agent Bridge — Project Setup');
 
+  // Re-run on an existing project: keep tools & sources, just re-pick content.
+  let existing: BridgeConfig | undefined;
   if (await configExists(repoRoot)) {
-    const existing = await loadConfig(repoRoot);
-    p.log.info(
-      `Config already exists with ${existing.sources.length} source(s). Finishing this setup will overwrite it.`
-    );
+    existing = await loadConfig(repoRoot);
+    const mode = await p.select({
+      message: `Found .agent-bridge/config.yml (${existing.sources.length} source(s), ${existing.tools.length} tool(s)). What do you want to do?`,
+      options: [
+        { value: 'reselect', label: 'Change what to sync', hint: 'keep tools and sources, re-pick domains and features' },
+        { value: 'restart', label: 'Start over', hint: 're-enter tools and sources' },
+      ],
+    });
+    cancelled(mode);
+    if (mode === 'restart') existing = undefined;
   }
 
   // 1. Tools
-  const tools = await promptTools();
+  const tools = existing ? existing.tools : await promptTools();
 
   // 2. Sources (then fetch them so we can show what's inside)
-  const sources = await promptSources(repoRoot);
+  const sources = existing ? existing.sources.map((s) => ({ ...s })) : await promptSources(repoRoot);
   await fetchSources(repoRoot, sources);
 
-  // 3. One tree: domains and their contents, per source
-  const picked = await promptSelection(repoRoot, sources, tools.map((t) => t.name));
+  // 3. One tree: domains and their contents, per source (pre-ticked on re-run)
+  const picked = await promptSelection(repoRoot, sources, tools.map((t) => t.name), existing);
   for (const source of sources) {
     source.domains = picked.get(source.name) ?? [];
   }
@@ -471,8 +495,8 @@ export async function initCommand(cwd?: string, opts?: InitOptions): Promise<voi
   await saveConfig(repoRoot, config);
   p.log.success('Saved .agent-bridge/config.yml — commit this file.');
 
-  // 4. Git hooks
-  if (isInGitRepo(repoRoot)) {
+  // 4. Git hooks (skipped on a re-run: they're already the user's choice)
+  if (!existing && isInGitRepo(repoRoot)) {
     const installHooks = await p.confirm({
       message: 'Install git hooks to auto-sync after checkout/merge?',
       initialValue: false,

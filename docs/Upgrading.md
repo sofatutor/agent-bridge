@@ -57,7 +57,7 @@ See [Configuration](Configuration.md). Manifests and sync behavior are unchanged
 2. The first `sync` on a machine (manual, or via the existing git hooks, which still call `update && sync`) migrates `config.yml`: per-source `domains` are added, the version is bumped, and Agent Bridge's own hooks are rewritten to call `sync` only.
 3. Commit the migrated `config.yml`. Teammates on the old version can still read it thanks to the top-level `domains` list; teammates on the new version get identical results.
 
-Nothing else changes for existing projects: tool folders, manifests and the `.agent-bridge/` clone layout are the same.
+Nothing else changes for existing projects: tool folders, manifests and the `.agent-bridge/` clone layout are the same. To trim a project that currently receives whole domains, run `agent-bridge init` → **Change what to sync**: the tree opens with the current selection ticked, and the next `sync` removes whatever you untick.
 
 ## Downgrading
 

@@ -33,7 +33,7 @@ sources:
       - name: shared
 ```
 
-Behavior is identical: every listed domain, everything inside it. The old top-level form keeps loading as a fallback, so an un-migrated file never breaks.
+Behavior is identical: every listed domain, everything inside it. The top-level list is kept (and regenerated as the union of all sources' domains) so a teammate still on 0.13 can load the migrated file. They sync those whole domains and ignore `include`; once they upgrade, the per-source lists apply.
 
 ### New: pick individual items with `include`
 
@@ -51,6 +51,14 @@ See [Configuration](Configuration.md). Manifests and sync behavior are unchanged
 
 `init` now asks for tools and sources first, fetches the sources, and shows their actual contents as one checkbox tree (domain → feature type → feature). The default domain list `backend,frontend,shared` is gone; non-interactive `init` without `--domains` takes every domain it finds.
 
+## Rolling out across a team
+
+1. Bump `@sofatutor/agent-bridge` in `package.json` (e.g. `^0.15.1`) and merge. Everyone gets the new version on their next `npm install`; the `postinstall` guard (`test -d .agent-bridge || …`) does not need to run again.
+2. The first `sync` on a machine (manual, or via the existing git hooks, which still call `update && sync`) migrates `config.yml`: per-source `domains` are added, the version is bumped, and Agent Bridge's own hooks are rewritten to call `sync` only.
+3. Commit the migrated `config.yml`. Teammates on the old version can still read it thanks to the top-level `domains` list; teammates on the new version get identical results.
+
+Nothing else changes for existing projects: tool folders, manifests and the `.agent-bridge/` clone layout are the same.
+
 ## Downgrading
 
-A config with a newer `version` than the installed package is left alone. The 0.14 per-source `domains` field is rejected by 0.13 and earlier, so pin the package version across the team.
+A config with a newer `version` than the installed package is left alone (no migration runs backwards). Because the top-level `domains` list is always present, 0.13 can still read files written by 0.14+.

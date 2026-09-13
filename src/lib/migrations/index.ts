@@ -1,4 +1,5 @@
 import { type BridgeConfig, saveConfig, loadConfig } from '../config.js';
+import { refreshGitHooks } from '../git.js';
 import { VERSION } from '../version.js';
 
 // ---------------------------------------------------------------------------
@@ -35,15 +36,21 @@ export interface MigrationResult {
 // ---------------------------------------------------------------------------
 
 export const migrations: Migration[] = [
-  // Example (uncomment when first real migration is needed):
-  // {
-  //   version: '0.6.0',
-  //   description: 'rename domains key',
-  //   migrate: async (_repoRoot, config) => {
-  //     // transform config...
-  //     return config;
-  //   },
-  // },
+  {
+    version: '0.14.0',
+    description: 'move top-level domains into each source; git hooks run `sync` only',
+    migrate: async (repoRoot, config) => {
+      // Legacy configs list domains once for all sources. Give every source its
+      // own copy (everything included) so the top-level key can go away.
+      const { domains, ...rest } = config;
+      const sources = config.sources.map((s) =>
+        s.domains ? s : { ...s, domains: (domains ?? []).map((name) => ({ name })) }
+      );
+      // `update` was merged into `sync`; rewrite hooks we installed earlier.
+      await refreshGitHooks(repoRoot);
+      return { ...rest, sources };
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------

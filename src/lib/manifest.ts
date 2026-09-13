@@ -1,6 +1,6 @@
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { BridgeConfig, SourceConfig } from './config.js';
+import { type BridgeConfig, type DomainConfig, sourceDomains, isIncluded } from './config.js';
 import { dirExists, fileExists } from './fs.js';
 import { resolveSourcePath } from './sources.js';
 
@@ -87,13 +87,13 @@ export async function discoverFeatureTypes(
 
   for (const source of config.sources) {
     const srcPath = resolveSourcePath(repoRoot, source);
-    for (const domain of config.domains) {
-      const domainDir = join(srcPath, domain);
+    for (const domain of sourceDomains(config, source)) {
+      const domainDir = join(srcPath, domain.name);
       if (!(await dirExists(domainDir))) continue;
 
       const entries = await readdir(domainDir, { withFileTypes: true });
       for (const entry of entries) {
-        if (entry.isDirectory()) {
+        if (entry.isDirectory() && isIncluded(domain, entry.name)) {
           types.add(entry.name);
         }
       }
@@ -119,11 +119,12 @@ export async function scanFeatures(
   for (const source of config.sources) {
     const srcPath = resolveSourcePath(repoRoot, source);
 
-    for (const domain of config.domains) {
+    for (const domain of sourceDomains(config, source)) {
       for (const ft of featureTypes) {
+        if (!isIncluded(domain, ft)) continue;
         const { toolPrefix: typeToolPrefix, baseName: baseType } =
           parseToolPrefix(ft);
-        const ftDir = join(srcPath, domain, ft);
+        const ftDir = join(srcPath, domain.name, ft);
 
         if (!(await dirExists(ftDir))) continue;
 
@@ -132,6 +133,7 @@ export async function scanFeatures(
           const isFile = entry.isFile();
           const isDir = entry.isDirectory();
           if (!isFile && !isDir) continue;
+          if (!isIncluded(domain, `${ft}/${entry.name}`)) continue;
 
           const { toolPrefix: itemToolPrefix } = parseToolPrefix(entry.name);
           const toolPrefix = itemToolPrefix ?? typeToolPrefix;
@@ -141,7 +143,7 @@ export async function scanFeatures(
             type: ft,
             displayType: baseType,
             source: source.name,
-            domain,
+            domain: domain.name,
             absolutePath: join(ftDir, entry.name),
             toolPrefix,
             isFile,
@@ -153,6 +155,65 @@ export async function scanFeatures(
 
   return features;
 }
+
+// ---------------------------------------------------------------------------
+// Source browsing (used by `init` to offer domains and their contents)
+// ---------------------------------------------------------------------------
+
+/** Top-level directories of a source that can act as domains. */
+export async function listDomains(srcPath: string): Promise<string[]> {
+  if (!(await dirExists(srcPath))) return [];
+  const entries = await readdir(srcPath, { withFileTypes: true });
+  return entries
+    .filter((e) => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules')
+    .map((e) => e.name)
+    .sort();
+}
+
+export interface DomainContents {
+  /** Feature-type folders and the features inside them. */
+  featureTypes: Array<{ name: string; features: string[] }>;
+  /** Flat files sync would pick up: well-known root files and `<tool>--` files. */
+  files: string[];
+}
+
+/**
+ * List what `sync` would consider inside a domain, so the user can pick a
+ * subset. `toolNames` filters `<tool>--file` entries to configured tools.
+ */
+export async function listDomainContents(
+  srcPath: string,
+  domain: string,
+  toolNames: Iterable<string>
+): Promise<DomainContents> {
+  const domainDir = join(srcPath, domain);
+  const tools = new Set(toolNames);
+  const result: DomainContents = { featureTypes: [], files: [] };
+  if (!(await dirExists(domainDir))) return result;
+
+  const entries = await readdir(domainDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue;
+    if (entry.isDirectory()) {
+      const features = (await readdir(join(domainDir, entry.name), { withFileTypes: true }))
+        .filter((f) => (f.isFile() || f.isDirectory()) && !f.name.startsWith('.'))
+        .map((f) => f.name)
+        .sort();
+      result.featureTypes.push({ name: entry.name, features });
+    } else if (entry.isFile()) {
+      const { toolPrefix } = parseToolPrefix(entry.name);
+      if ((ROOT_FILES as readonly string[]).includes(entry.name) || (toolPrefix && tools.has(toolPrefix))) {
+        result.files.push(entry.name);
+      }
+    }
+  }
+  result.featureTypes.sort((a, b) => a.name.localeCompare(b.name));
+  result.files.sort();
+  return result;
+}
+
+/** Type re-export so callers don't need to import config.js just for this. */
+export type { DomainConfig };
 
 // ---------------------------------------------------------------------------
 // Duplicate detection
@@ -223,14 +284,15 @@ export async function scanRootFiles(
 
   for (const source of config.sources) {
     const srcPath = resolveSourcePath(repoRoot, source);
-    for (const domain of config.domains) {
+    for (const domain of sourceDomains(config, source)) {
       for (const fileName of ROOT_FILES) {
-        const filePath = join(srcPath, domain, fileName);
+        if (!isIncluded(domain, fileName)) continue;
+        const filePath = join(srcPath, domain.name, fileName);
         if (await fileExists(filePath)) {
           found.push({
             fileName,
             source: source.name,
-            domain,
+            domain: domain.name,
             absolutePath: filePath,
           });
         }
@@ -307,13 +369,13 @@ export async function scanToolRootEntries(
 
   for (const source of config.sources) {
     const srcPath = resolveSourcePath(repoRoot, source);
-    for (const domain of config.domains) {
-      const domainDir = join(srcPath, domain);
+    for (const domain of sourceDomains(config, source)) {
+      const domainDir = join(srcPath, domain.name);
       if (!(await dirExists(domainDir))) continue;
 
       const domainEntries = await readdir(domainDir, { withFileTypes: true });
       for (const entry of domainEntries) {
-        if (!entry.isFile()) continue;
+        if (!entry.isFile() || !isIncluded(domain, entry.name)) continue;
 
         const { toolPrefix, baseName } = parseToolPrefix(entry.name);
         if (!toolPrefix || !toolNames.has(toolPrefix)) continue;
@@ -322,7 +384,7 @@ export async function scanToolRootEntries(
           toolName: toolPrefix,
           name: baseName,
           source: source.name,
-          domain,
+          domain: domain.name,
           absolutePath: join(domainDir, entry.name),
         });
       }

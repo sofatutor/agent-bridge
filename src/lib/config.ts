@@ -51,14 +51,74 @@ const sourceConfigSchema = z.object({
     .optional(),
 });
 
+/**
+ * A path inside a domain that should be synced. One or two segments:
+ *   `skills`            → the whole feature type
+ *   `skills/deploy`     → a single feature (folder or file)
+ *   `AGENTS.md`         → a flat file at the domain root
+ */
+const includePath = z
+  .string()
+  .min(1)
+  .refine(
+    (v) => {
+      const segs = v.split('/');
+      return (
+        segs.length <= 2 &&
+        segs.every((seg) => SAFE_NAME_RE.test(seg) && seg !== '.' && seg !== '..')
+      );
+    },
+    { message: 'Must be <feature-type>, <feature-type>/<feature> or <file> using [A-Za-z0-9._-]' }
+  );
+
+const domainObjectSchema = z.object({
+  name: safeName,
+  /** Paths to sync from this domain. Omitted = everything. */
+  include: z.array(includePath).optional(),
+});
+
+/** Domains may be written as a bare string (`- shared`) or an object with `include`. */
+const domainConfigSchema = z.union([
+  safeName.transform((name): { name: string; include?: string[] } => ({ name })),
+  domainObjectSchema,
+]);
+
 const bridgeConfigSchema = z
   .object({
     version: z.string().optional(),
-    domains: z.array(safeName).min(1, "'domains' must be a non-empty array"),
+    /**
+     * Legacy (< 0.14): domains applied to every source. Still honored as the
+     * fallback for sources without their own `domains`.
+     */
+    domains: z.array(safeName).optional(),
     tools: z.array(toolConfigSchema).min(1, "'tools' must be a non-empty array"),
-    sources: z.array(sourceConfigSchema).min(1, "'sources' must be a non-empty array"),
+    sources: z
+      .array(sourceConfigSchema.extend({ domains: z.array(domainConfigSchema).optional() }))
+      .min(1, "'sources' must be a non-empty array"),
   })
   .superRefine((data, ctx) => {
+    data.sources.forEach((s, i) => {
+      const domains = s.domains ?? data.domains;
+      if (!domains || domains.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Source '${s.name}' has no domains (set 'sources[].domains' or top-level 'domains')`,
+          path: ['sources', i, 'domains'],
+        });
+      }
+      const seen = new Set<string>();
+      for (const d of s.domains ?? []) {
+        if (seen.has(d.name)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Duplicate domain '${d.name}' in source '${s.name}'`,
+            path: ['sources', i, 'domains'],
+          });
+        }
+        seen.add(d.name);
+      }
+    });
+
     // Check unique tool names
     const toolNames = new Set<string>();
     const toolFolders = new Set<string>();
@@ -122,8 +182,33 @@ const bridgeConfigSchema = z
 
 export type SourceType = 'git-https' | 'git-ssh' | 'local';
 export type ToolConfig = z.infer<typeof toolConfigSchema>;
-export type SourceConfig = z.infer<typeof sourceConfigSchema>;
+export type DomainConfig = z.infer<typeof domainObjectSchema>;
+export type SourceConfig = z.infer<typeof sourceConfigSchema> & { domains?: DomainConfig[] };
 export type BridgeConfig = z.infer<typeof bridgeConfigSchema>;
+
+// ---------------------------------------------------------------------------
+// Domain resolution & include filtering
+// ---------------------------------------------------------------------------
+
+/**
+ * Domains to scan for a source: its own `domains`, falling back to the legacy
+ * top-level `domains` list (everything included).
+ */
+export function sourceDomains(config: BridgeConfig, source: SourceConfig): DomainConfig[] {
+  if (source.domains) return source.domains;
+  return (config.domains ?? []).map((name) => ({ name }));
+}
+
+/**
+ * Whether `relPath` (relative to the domain root, e.g. `skills`,
+ * `skills/deploy`, `AGENTS.md`) is selected by the domain's `include` list.
+ * No `include` means everything is selected.
+ */
+export function isIncluded(domain: DomainConfig, relPath: string): boolean {
+  const inc = domain.include;
+  if (!inc) return true;
+  return inc.some((entry) => entry === relPath || relPath.startsWith(entry + '/') || entry.startsWith(relPath + '/'));
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -253,7 +338,15 @@ export async function saveConfig(
 ): Promise<void> {
   const dir = bridgeDir(repoRoot);
   await mkdir(dir, { recursive: true });
-  const content = yaml.dump(config, { lineWidth: -1, noRefs: true });
+  // Compact form: a domain with no `include` is written as a bare string.
+  const out = {
+    ...config,
+    sources: config.sources.map((s) => ({
+      ...s,
+      domains: s.domains?.map((d) => (d.include ? d : d.name)),
+    })),
+  };
+  const content = yaml.dump(out, { lineWidth: -1, noRefs: true, skipInvalid: true });
   await writeFile(configPath(repoRoot), content, 'utf-8');
 }
 

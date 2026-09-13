@@ -246,7 +246,7 @@ describe('runMigrations', () => {
       description: 'add domain',
       migrate: async (_r, config) => ({
         ...config,
-        domains: [...config.domains, 'backend'],
+        domains: [...(config.domains ?? []), 'backend'],
       }),
     });
 
@@ -285,5 +285,60 @@ describe('runMigrations', () => {
     await runMigrations(repoRoot);
 
     expect(ran).toEqual(['0.3.0']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0.14.0 migration (real registry)
+// ---------------------------------------------------------------------------
+
+describe('migration 0.14.0', () => {
+  let repoRoot: string;
+
+  beforeEach(async () => {
+    repoRoot = await mkdtemp(join(tmpdir(), 'agent-bridge-mig014-'));
+  });
+
+  afterEach(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
+  });
+
+  it('moves top-level domains into every source', async () => {
+    const legacy = {
+      version: '0.13.1',
+      domains: ['shared', 'backend'],
+      tools: [{ name: 'vscode', folder: '.github' }],
+      sources: [
+        { name: 'a', source: '/tmp/a' },
+        { name: 'b', source: '/tmp/b' },
+      ],
+    } as BridgeConfig;
+    // Call the migration directly: the runner only reaches it once the
+    // installed VERSION is >= 0.14.0.
+    const m014 = migrations.find((m) => m.version === '0.14.0')!;
+    await saveConfig(repoRoot, await m014.migrate(repoRoot, legacy));
+
+    const loaded = await loadConfig(repoRoot);
+    expect(loaded.domains).toBeUndefined();
+    expect(loaded.sources[0].domains).toEqual([{ name: 'shared' }, { name: 'backend' }]);
+    expect(loaded.sources[1].domains).toEqual([{ name: 'shared' }, { name: 'backend' }]);
+
+    // Written in compact form (bare strings)
+    const raw = await readFile(join(repoRoot, '.agent-bridge', 'config.yml'), 'utf-8');
+    expect(raw).toContain('- shared');
+    expect(raw).not.toContain('name: shared');
+  });
+
+  it('leaves sources that already have their own domains untouched', async () => {
+    const m014 = migrations.find((m) => m.version === '0.14.0')!;
+    const migrated = await m014.migrate(repoRoot, {
+      version: '0.13.1',
+      domains: ['shared'],
+      tools: [{ name: 'vscode', folder: '.github' }],
+      sources: [{ name: 'a', source: '/tmp/a', domains: [{ name: 'x', include: ['skills'] }] }],
+    });
+    await saveConfig(repoRoot, migrated);
+    const loaded = await loadConfig(repoRoot);
+    expect(loaded.sources[0].domains).toEqual([{ name: 'x', include: ['skills'] }]);
   });
 });

@@ -16,6 +16,8 @@ import {
 import { findRepoRoot, isInGitRepo, installGitHooks } from '../lib/git.js';
 import { listDomains, listDomainContents } from '../lib/manifest.js';
 import { syncSource, resolveSourcePath, ensureBridgeGitignore } from '../lib/sources.js';
+import { treeSelect } from '../lib/tree-prompt.js';
+import { type TreeNode } from '../lib/tree.js';
 import { VERSION } from '../lib/version.js';
 import { syncCommand } from './sync.js';
 
@@ -284,14 +286,22 @@ async function promptSources(repoRoot: string): Promise<SourceConfig[]> {
 }
 
 /**
- * Show every domain found in every source as one grouped checklist
- * (group = source). Returns the picked domain names per source.
+ * One checkbox tree: source → domain → feature type → feature (plus a
+ * `files` group per domain). Ticking a node ticks everything beneath it.
+ * Returns, per source, the picked domains with their `include` lists
+ * (`undefined` include = whole domain).
  */
-async function promptDomains(
+async function promptSelection(
   repoRoot: string,
-  sources: SourceConfig[]
-): Promise<Map<string, string[]>> {
-  const options: Record<string, Array<{ value: string; label: string; hint?: string }>> = {};
+  sources: SourceConfig[],
+  toolNames: string[]
+): Promise<Map<string, DomainConfig[]>> {
+  // Leaf value: `<source>\u0000<domain>\u0000<relPath>`; a domain with no
+  // syncable content becomes a leaf with an empty relPath (= whole domain).
+  const SEP = '\u0000';
+  const contentsByKey = new Map<string, Awaited<ReturnType<typeof listDomainContents>>>();
+  const tree: TreeNode[] = [];
+
   for (const source of sources) {
     const srcPath = resolveSourcePath(repoRoot, source);
     const domains = await listDomains(srcPath);
@@ -299,67 +309,67 @@ async function promptDomains(
       p.log.warn(`${source.name}: no domain folders found — nothing to select.`);
       continue;
     }
-    options[source.name] = [];
+    const domainNodes: TreeNode[] = [];
     for (const domain of domains) {
-      const contents = await listDomainContents(srcPath, domain, []);
+      const contents = await listDomainContents(srcPath, domain, toolNames);
+      contentsByKey.set(`${source.name}${SEP}${domain}`, contents);
+      const prefix = `${source.name}${SEP}${domain}${SEP}`;
+      const children: TreeNode[] = contents.featureTypes
+        .filter((ft) => ft.features.length > 0)
+        .map((ft) => ({
+          label: ft.name,
+          hint: `(${ft.features.length})`,
+          children: ft.features.map((f) => ({ label: f, value: `${prefix}${ft.name}/${f}` })),
+        }));
+      if (contents.files.length > 0) {
+        children.push({ label: 'files', children: contents.files.map((f) => ({ label: f, value: `${prefix}${f}` })) });
+      }
       const hint = contents.featureTypes
         .filter((ft) => ft.features.length > 0)
         .map((ft) => `${ft.features.length} ${ft.name}`)
         .join(', ');
-      options[source.name].push({ value: `${source.name}/${domain}`, label: domain, hint: hint || undefined });
+      domainNodes.push(
+        children.length > 0
+          ? { label: domain, hint: hint ? `(${hint})` : undefined, children }
+          : { label: domain, hint: '(empty)', value: prefix }
+      );
     }
+    tree.push({ label: source.name, children: domainNodes });
   }
 
-  if (Object.keys(options).length === 0) {
+  if (tree.length === 0) {
     p.cancel('No domains found in any source. Check the source layout: <source>/<domain>/<feature-type>/…');
     process.exit(1);
   }
 
-  const picked = await p.groupMultiselect({
-    message: 'Which domains do you want to sync? (space = toggle, pick a source to toggle all its domains)',
-    options,
+  const picked = await treeSelect({
+    message: 'What do you want to sync? Tick a domain to take all of it, or open it and pick pieces.',
+    tree,
+    expandDepth: 1,
     required: true,
   });
   cancelled(picked);
 
-  const bySource = new Map<string, string[]>();
+  // Group selected leaves by source/domain, then compress into include lists.
+  const byDomain = new Map<string, Set<string>>();
   for (const value of picked as string[]) {
-    const idx = value.indexOf('/');
-    const sourceName = value.slice(0, idx);
-    const domain = value.slice(idx + 1);
-    bySource.set(sourceName, [...(bySource.get(sourceName) ?? []), domain]);
+    const [sourceName, domain, rel] = value.split(SEP);
+    const key = `${sourceName}${SEP}${domain}`;
+    const set = byDomain.get(key) ?? new Set<string>();
+    if (rel) set.add(rel);
+    byDomain.set(key, set);
   }
-  return bySource;
-}
 
-/** Let the user deselect individual features / files inside one domain. */
-async function promptInclude(
-  srcPath: string,
-  sourceName: string,
-  domain: string,
-  toolNames: string[]
-): Promise<string[] | undefined> {
-  const contents = await listDomainContents(srcPath, domain, toolNames);
-  const options: Record<string, Array<{ value: string; label: string }>> = {};
-  for (const ft of contents.featureTypes) {
-    if (ft.features.length === 0) continue;
-    options[ft.name] = ft.features.map((f) => ({ value: `${ft.name}/${f}`, label: f }));
+  const result = new Map<string, DomainConfig[]>();
+  for (const [key, rels] of byDomain) {
+    const [sourceName, domain] = key.split(SEP);
+    const contents = contentsByKey.get(key)!;
+    const include = rels.size === 0 ? undefined : buildInclude(contents, rels);
+    const list = result.get(sourceName) ?? [];
+    list.push(include ? { name: domain, include } : { name: domain });
+    result.set(sourceName, list);
   }
-  if (contents.files.length > 0) {
-    options['files'] = contents.files.map((f) => ({ value: f, label: f }));
-  }
-  if (Object.keys(options).length === 0) return undefined;
-
-  const all = Object.values(options).flatMap((o) => o.map((x) => x.value));
-  const picked = await p.groupMultiselect({
-    message: `${sourceName}/${domain}: deselect what you don't want`,
-    options,
-    initialValues: all,
-    required: true,
-  });
-  cancelled(picked);
-
-  return buildInclude(contents, new Set(picked as string[]));
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -446,26 +456,10 @@ export async function initCommand(cwd?: string, opts?: InitOptions): Promise<voi
   const sources = await promptSources(repoRoot);
   await fetchSources(repoRoot, sources);
 
-  // 3. Domains, grouped by source
-  const pickedDomains = await promptDomains(repoRoot, sources);
-
-  // 4. Optional fine-tuning inside each domain
-  const everything = await p.confirm({
-    message: 'Sync everything inside the selected domains? (No = pick individual skills, agents, files…)',
-    initialValue: true,
-  });
-  cancelled(everything);
-
-  const toolNames = tools.map((t) => t.name);
+  // 3. One tree: domains and their contents, per source
+  const picked = await promptSelection(repoRoot, sources, tools.map((t) => t.name));
   for (const source of sources) {
-    const domains = pickedDomains.get(source.name) ?? [];
-    source.domains = [];
-    for (const domain of domains) {
-      const include = everything
-        ? undefined
-        : await promptInclude(resolveSourcePath(repoRoot, source), source.name, domain, toolNames);
-      source.domains.push(include ? { name: domain, include } : { name: domain });
-    }
+    source.domains = picked.get(source.name) ?? [];
   }
   // Sources without any picked domain contribute nothing — drop them.
   const activeSources = sources.filter((s) => (s.domains?.length ?? 0) > 0);
@@ -477,7 +471,7 @@ export async function initCommand(cwd?: string, opts?: InitOptions): Promise<voi
   await saveConfig(repoRoot, config);
   p.log.success('Saved .agent-bridge/config.yml — commit this file.');
 
-  // 5. Git hooks
+  // 4. Git hooks
   if (isInGitRepo(repoRoot)) {
     const installHooks = await p.confirm({
       message: 'Install git hooks to auto-sync after checkout/merge?',
@@ -488,7 +482,7 @@ export async function initCommand(cwd?: string, opts?: InitOptions): Promise<voi
     }
   }
 
-  // 6. Sync right away
+  // 5. Sync right away
   const syncNow = await p.confirm({ message: 'Run `agent-bridge sync` now?', initialValue: true });
   if (!p.isCancel(syncNow) && syncNow) {
     await syncCommand(repoRoot);

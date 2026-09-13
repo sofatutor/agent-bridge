@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vite-plus/test';
-import { deriveSourceName, parseToolsArg, parseSourceArg } from '../commands/init.js';
+import { deriveSourceName, parseToolsArg, parseSourceArg, buildInclude } from '../commands/init.js';
 
 describe('deriveSourceName', () => {
   it('extracts repo name from HTTPS URL', () => {
@@ -120,5 +120,31 @@ describe('parseSourceArg', () => {
 
   it('throws for empty source', () => {
     expect(() => parseSourceArg('', repoRoot)).toThrow('Empty source');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildInclude
+// ---------------------------------------------------------------------------
+
+describe('buildInclude', () => {
+  const contents = {
+    featureTypes: [
+      { name: 'skills', features: ['a', 'b'] },
+      { name: 'agents', features: ['x'] },
+    ],
+    files: ['AGENTS.md'],
+  };
+
+  it('returns undefined when everything is selected', () => {
+    expect(buildInclude(contents, new Set(['skills/a', 'skills/b', 'agents/x', 'AGENTS.md']))).toBeUndefined();
+  });
+
+  it('collapses a fully selected feature type to its name', () => {
+    expect(buildInclude(contents, new Set(['skills/a', 'skills/b', 'agents/x']))).toEqual(['skills', 'agents']);
+  });
+
+  it('lists partially selected features individually', () => {
+    expect(buildInclude(contents, new Set(['skills/a', 'AGENTS.md']))).toEqual(['skills/a', 'AGENTS.md']);
   });
 });

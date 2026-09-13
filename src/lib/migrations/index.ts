@@ -41,14 +41,14 @@ export const migrations: Migration[] = [
     description: 'move top-level domains into each source; git hooks run `sync` only',
     migrate: async (repoRoot, config) => {
       // Legacy configs list domains once for all sources. Give every source its
-      // own copy (everything included) so the top-level key can go away.
-      const { domains, ...rest } = config;
+      // own copy (everything included). The top-level key stays: saveConfig
+      // keeps it as the union so older CLIs can still read the file.
       const sources = config.sources.map((s) =>
-        s.domains ? s : { ...s, domains: (domains ?? []).map((name) => ({ name })) }
+        s.domains ? s : { ...s, domains: (config.domains ?? []).map((name) => ({ name })) }
       );
       // `update` was merged into `sync`; rewrite hooks we installed earlier.
       await refreshGitHooks(repoRoot);
-      return { ...rest, sources };
+      return { ...config, sources };
     },
   },
 ];

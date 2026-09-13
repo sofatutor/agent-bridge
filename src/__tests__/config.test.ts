@@ -476,4 +476,18 @@ describe('saveConfig domains', () => {
     const loaded = await loadConfig(tmp);
     expect(loaded.sources[0].domains).toEqual(cfg.sources[0].domains);
   });
+
+  it('writes a top-level domains union so Agent Bridge ≤ 0.13 can still load the file', async () => {
+    await saveConfig(tmp, {
+      tools: [{ name: 'vscode', folder: '.github' }],
+      sources: [
+        { name: 'a', source: '/abs/a', domains: [{ name: 'shared' }, { name: 'x', include: ['skills'] }] },
+        { name: 'b', source: '/abs/b', domains: [{ name: 'shared' }, { name: 'y' }] },
+      ],
+    });
+    const loaded = await loadConfig(tmp);
+    expect(loaded.domains).toEqual(['shared', 'x', 'y']);
+    // Per-source lists win; the union is only a compatibility shadow
+    expect(sourceDomains(loaded, loaded.sources[0]).map((d) => d.name)).toEqual(['shared', 'x']);
+  });
 });

@@ -26,7 +26,14 @@ Interactive setup. Order of questions:
 5. **Git hooks?** — install `post-checkout` / `post-merge` hooks that run `sync` in the background.
 6. **Run sync now?** — Yes by default.
 
-Re-running `init` overwrites the existing config. If a source has no domains selected it is dropped.
+### Changing what you sync
+
+Re-run `agent-bridge init` in a project that already has a config. It asks:
+
+- **Change what to sync** — keeps tools and sources, opens the tree with your current selection ticked. Untick or tick, confirm, sync. Anything you unticked is removed from the tool folders by the following `sync` (tracked through the `.agentbridge` manifests, so files you added yourself are untouched).
+- **Start over** — the full wizard; the config is rewritten from scratch.
+
+If a source ends up with no domains selected it is dropped from the config.
 
 ### Non-interactive
 

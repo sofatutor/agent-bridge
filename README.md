@@ -24,7 +24,7 @@ Then commit the config:
 git add .agent-bridge/config.yml && git commit -m "chore: add agent-bridge config"
 ```
 
-Pull the latest features any time:
+Change your selection later with `agent-bridge init` → **Change what to sync**. Pull the latest features any time:
 
 ```bash
 npx @sofatutor/agent-bridge sync

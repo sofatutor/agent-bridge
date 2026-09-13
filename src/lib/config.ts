@@ -77,7 +77,7 @@ const domainObjectSchema = z.object({
   include: z.array(includePath).optional(),
 });
 
-/** Domains may be written as a bare string (`- shared`) or an object with `include`. */
+/** Domains are written as objects; a bare string (`- shared`) is accepted as shorthand. */
 const domainConfigSchema = z.union([
   safeName.transform((name): { name: string; include?: string[] } => ({ name })),
   domainObjectSchema,
@@ -338,15 +338,7 @@ export async function saveConfig(
 ): Promise<void> {
   const dir = bridgeDir(repoRoot);
   await mkdir(dir, { recursive: true });
-  // Compact form: a domain with no `include` is written as a bare string.
-  const out = {
-    ...config,
-    sources: config.sources.map((s) => ({
-      ...s,
-      domains: s.domains?.map((d) => (d.include ? d : d.name)),
-    })),
-  };
-  const content = yaml.dump(out, { lineWidth: -1, noRefs: true, skipInvalid: true });
+  const content = yaml.dump(config, { lineWidth: -1, noRefs: true, skipInvalid: true });
   await writeFile(configPath(repoRoot), content, 'utf-8');
 }
 

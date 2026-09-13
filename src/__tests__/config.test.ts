@@ -452,7 +452,7 @@ describe('isIncluded', () => {
   });
 });
 
-describe('saveConfig compact domains', () => {
+describe('saveConfig domains', () => {
   let tmp: string;
   beforeEach(async () => {
     tmp = await mkdtemp(join(tmpdir(), 'agent-bridge-compact-'));
@@ -461,7 +461,7 @@ describe('saveConfig compact domains', () => {
     await rm(tmp, { recursive: true, force: true });
   });
 
-  it('writes domains without include as bare strings and round-trips', async () => {
+  it('always writes domains as objects and round-trips', async () => {
     const cfg: BridgeConfig = {
       tools: [{ name: 'vscode', folder: '.github' }],
       sources: [
@@ -470,7 +470,7 @@ describe('saveConfig compact domains', () => {
     };
     await saveConfig(tmp, cfg);
     const raw = await readFile(configPath(tmp), 'utf-8');
-    expect(raw).toContain('- shared\n');
+    expect(raw).toContain('- name: shared\n');
     expect(raw).toContain('name: backend');
     expect(raw).not.toContain('domains: null');
     const loaded = await loadConfig(tmp);

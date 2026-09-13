@@ -323,10 +323,9 @@ describe('migration 0.14.0', () => {
     expect(loaded.sources[0].domains).toEqual([{ name: 'shared' }, { name: 'backend' }]);
     expect(loaded.sources[1].domains).toEqual([{ name: 'shared' }, { name: 'backend' }]);
 
-    // Written in compact form (bare strings)
     const raw = await readFile(join(repoRoot, '.agent-bridge', 'config.yml'), 'utf-8');
-    expect(raw).toContain('- shared');
-    expect(raw).not.toContain('name: shared');
+    expect(raw).toContain('- name: shared');
+    expect(raw).not.toMatch(/^domains:/m);
   });
 
   it('leaves sources that already have their own domains untouched', async () => {

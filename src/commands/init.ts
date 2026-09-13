@@ -9,12 +9,15 @@ import {
   removeOptOutMarker,
   OPT_OUT_MARKER,
   type BridgeConfig,
+  type DomainConfig,
   type ToolConfig,
   type SourceConfig,
 } from '../lib/config.js';
 import { findRepoRoot, isInGitRepo, installGitHooks } from '../lib/git.js';
-import { syncAllSources, ensureBridgeGitignore } from '../lib/sources.js';
+import { listDomains, listDomainContents } from '../lib/manifest.js';
+import { syncSource, resolveSourcePath, ensureBridgeGitignore } from '../lib/sources.js';
 import { VERSION } from '../lib/version.js';
+import { syncCommand } from './sync.js';
 
 const WELL_KNOWN_TOOLS = [
   { value: { name: 'vscode', folder: '.github' }, label: 'VS Code (.github/)' },
@@ -29,8 +32,6 @@ const WELL_KNOWN_TOOL_MAP: Record<string, ToolConfig> = Object.fromEntries(
 
 const CUSTOM_TOOL_SENTINEL: ToolConfig = { name: '__custom__', folder: '__custom__' };
 
-const DEFAULT_DOMAINS = ['backend', 'frontend', 'shared'];
-
 export interface InitOptions {
   force?: boolean;
   domains?: string;
@@ -38,6 +39,10 @@ export interface InitOptions {
   source?: string[];
   hooks?: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Argument parsing (shared by interactive and non-interactive mode)
+// ---------------------------------------------------------------------------
 
 /**
  * Derive a short source name from a URL or local path.
@@ -120,10 +125,248 @@ export function parseSourceArg(input: string, repoRoot: string): SourceConfig {
   return entry;
 }
 
-export async function initCommand(
-  cwd?: string,
-  opts?: InitOptions
-): Promise<void> {
+/**
+ * Turn a per-domain selection into the `include` list stored in config.
+ * Returns `undefined` when everything is selected (= sync the whole domain).
+ * A fully selected feature type collapses to its name (`skills`).
+ */
+export function buildInclude(
+  contents: { featureTypes: Array<{ name: string; features: string[] }>; files: string[] },
+  selected: Set<string>
+): string[] | undefined {
+  const include: string[] = [];
+  let everything = true;
+
+  for (const ft of contents.featureTypes) {
+    const picked = ft.features.filter((f) => selected.has(`${ft.name}/${f}`));
+    if (picked.length === ft.features.length) {
+      include.push(ft.name);
+    } else {
+      everything = false;
+      include.push(...picked.map((f) => `${ft.name}/${f}`));
+    }
+  }
+  for (const file of contents.files) {
+    if (selected.has(file)) include.push(file);
+    else everything = false;
+  }
+
+  return everything ? undefined : include;
+}
+
+// ---------------------------------------------------------------------------
+// Shared steps
+// ---------------------------------------------------------------------------
+
+function cancelled(value: unknown): value is symbol {
+  if (p.isCancel(value)) {
+    p.cancel('Setup cancelled.');
+    process.exit(1);
+  }
+  return false;
+}
+
+/** Clone remote sources / verify local ones. Exits on failure. */
+async function fetchSources(repoRoot: string, sources: SourceConfig[]): Promise<void> {
+  await ensureBridgeGitignore(repoRoot);
+  const s = p.spinner();
+  s.start('Fetching sources…');
+  const results = await Promise.all(sources.map((src) => syncSource(repoRoot, src)));
+  const errors = results.filter((r) => r.error);
+  if (errors.length > 0) {
+    s.stop('Some sources failed');
+    for (const err of errors) p.log.error(`${err.name}: ${err.error}`);
+    p.cancel('Fix the source URL/path and run `agent-bridge init` again.');
+    process.exit(1);
+  }
+  s.stop(`${sources.length} source(s) ready`);
+}
+
+async function maybeInstallHooks(repoRoot: string, force: boolean): Promise<void> {
+  const hookResult = await installGitHooks(repoRoot, force);
+  if (hookResult.installed.length > 0) {
+    p.log.success(`Installed git hooks: ${hookResult.installed.join(', ')}`);
+  }
+  if (hookResult.skipped.length > 0) {
+    p.log.warn(`Skipped hooks (existing non-Agent-Bridge hooks): ${hookResult.skipped.join(', ')}`);
+    p.log.info('Re-run `agent-bridge init --force` to overwrite, or integrate manually.');
+  }
+  for (const e of hookResult.errors) {
+    p.log.error(`Hook ${e.hook}: ${e.error}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Interactive prompts
+// ---------------------------------------------------------------------------
+
+async function promptTools(): Promise<ToolConfig[]> {
+  const selected = await p.multiselect({
+    message: 'Which tools should receive synced files?',
+    options: [...WELL_KNOWN_TOOLS, { value: CUSTOM_TOOL_SENTINEL, label: 'Other (add custom tool)' }],
+    required: true,
+  });
+  cancelled(selected);
+
+  const tools = (selected as ToolConfig[]).filter((t) => t.name !== CUSTOM_TOOL_SENTINEL.name);
+  if (!(selected as ToolConfig[]).some((t) => t.name === CUSTOM_TOOL_SENTINEL.name)) return tools;
+
+  for (;;) {
+    const name = await p.text({
+      message: 'Custom tool name (used for <tool>-- prefix matching)',
+      placeholder: 'windsurf',
+      validate: (v) => {
+        if (!v.trim()) return 'Tool name cannot be empty';
+        if (tools.some((t) => t.name === v.trim())) return 'Tool name already used';
+      },
+    });
+    if (p.isCancel(name)) break;
+
+    const folder = await p.text({
+      message: `Target folder for "${name}"`,
+      placeholder: `.${name}`,
+      validate: (v) => {
+        if (!v.trim()) return 'Folder cannot be empty';
+        if (tools.some((t) => t.folder === v.trim())) return 'Folder already used by another tool';
+      },
+    });
+    if (p.isCancel(folder)) break;
+
+    tools.push({ name: name.trim(), folder: folder.trim() });
+
+    const more = await p.confirm({ message: 'Add another custom tool?', initialValue: false });
+    if (p.isCancel(more) || !more) break;
+  }
+
+  if (tools.length === 0) {
+    p.cancel('At least one tool is required.');
+    process.exit(1);
+  }
+  return tools;
+}
+
+async function promptSources(repoRoot: string): Promise<SourceConfig[]> {
+  const sources: SourceConfig[] = [];
+  p.log.info('Add at least one source — a Git URL or a local folder that follows the domain layout.');
+
+  for (;;) {
+    const input = await p.text({
+      message: sources.length === 0 ? 'Source URL or local path' : 'Another source URL or local path',
+      placeholder: 'https://github.com/org/ai-hub.git',
+      validate: (v) => {
+        if (!v.trim()) return 'Source URL/path cannot be empty';
+        const derived = deriveSourceName(v.trim());
+        if (sources.some((s) => s.name === derived))
+          return `Source name "${derived}" (derived from URL) already used`;
+      },
+    });
+    if (p.isCancel(input)) {
+      if (sources.length === 0) cancelled(input);
+      break;
+    }
+
+    const entry = parseSourceArg(input, repoRoot);
+    if (isRemoteSource(entry.source) && !entry.branch) {
+      const branch = await p.text({
+        message: 'Branch (leave empty for the remote default)',
+        placeholder: 'main',
+        defaultValue: '',
+      });
+      cancelled(branch);
+      if ((branch as string).trim()) entry.branch = (branch as string).trim();
+    }
+    sources.push(entry);
+
+    const more = await p.confirm({ message: 'Add another source?', initialValue: false });
+    if (p.isCancel(more) || !more) break;
+  }
+  return sources;
+}
+
+/**
+ * Show every domain found in every source as one grouped checklist
+ * (group = source). Returns the picked domain names per source.
+ */
+async function promptDomains(
+  repoRoot: string,
+  sources: SourceConfig[]
+): Promise<Map<string, string[]>> {
+  const options: Record<string, Array<{ value: string; label: string; hint?: string }>> = {};
+  for (const source of sources) {
+    const srcPath = resolveSourcePath(repoRoot, source);
+    const domains = await listDomains(srcPath);
+    if (domains.length === 0) {
+      p.log.warn(`${source.name}: no domain folders found — nothing to select.`);
+      continue;
+    }
+    options[source.name] = [];
+    for (const domain of domains) {
+      const contents = await listDomainContents(srcPath, domain, []);
+      const hint = contents.featureTypes
+        .filter((ft) => ft.features.length > 0)
+        .map((ft) => `${ft.features.length} ${ft.name}`)
+        .join(', ');
+      options[source.name].push({ value: `${source.name}/${domain}`, label: domain, hint: hint || undefined });
+    }
+  }
+
+  if (Object.keys(options).length === 0) {
+    p.cancel('No domains found in any source. Check the source layout: <source>/<domain>/<feature-type>/…');
+    process.exit(1);
+  }
+
+  const picked = await p.groupMultiselect({
+    message: 'Which domains do you want to sync? (space = toggle, pick a source to toggle all its domains)',
+    options,
+    required: true,
+  });
+  cancelled(picked);
+
+  const bySource = new Map<string, string[]>();
+  for (const value of picked as string[]) {
+    const idx = value.indexOf('/');
+    const sourceName = value.slice(0, idx);
+    const domain = value.slice(idx + 1);
+    bySource.set(sourceName, [...(bySource.get(sourceName) ?? []), domain]);
+  }
+  return bySource;
+}
+
+/** Let the user deselect individual features / files inside one domain. */
+async function promptInclude(
+  srcPath: string,
+  sourceName: string,
+  domain: string,
+  toolNames: string[]
+): Promise<string[] | undefined> {
+  const contents = await listDomainContents(srcPath, domain, toolNames);
+  const options: Record<string, Array<{ value: string; label: string }>> = {};
+  for (const ft of contents.featureTypes) {
+    if (ft.features.length === 0) continue;
+    options[ft.name] = ft.features.map((f) => ({ value: `${ft.name}/${f}`, label: f }));
+  }
+  if (contents.files.length > 0) {
+    options['files'] = contents.files.map((f) => ({ value: f, label: f }));
+  }
+  if (Object.keys(options).length === 0) return undefined;
+
+  const all = Object.values(options).flatMap((o) => o.map((x) => x.value));
+  const picked = await p.groupMultiselect({
+    message: `${sourceName}/${domain}: deselect what you don't want`,
+    options,
+    initialValues: all,
+    required: true,
+  });
+  cancelled(picked);
+
+  return buildInclude(contents, new Set(picked as string[]));
+}
+
+// ---------------------------------------------------------------------------
+// Command
+// ---------------------------------------------------------------------------
+
+export async function initCommand(cwd?: string, opts?: InitOptions): Promise<void> {
   const repoRoot = cwd ?? findRepoRoot();
 
   // Respect an opt-out tombstone so a postinstall guard doesn't reinstall.
@@ -143,7 +386,6 @@ export async function initCommand(
   const hasToolsArg = !!opts?.tools;
   const hasSourceArg = !!(opts?.source && opts.source.length > 0);
 
-  // Require both --tools and --source for non-interactive mode
   if (hasToolsArg !== hasSourceArg) {
     p.log.error('Both --tools and --source are required for non-interactive init.');
     process.exit(1);
@@ -151,14 +393,9 @@ export async function initCommand(
 
   // --- Non-interactive mode ---
   if (hasToolsArg && hasSourceArg) {
-    const domains = opts!.domains
-      ? opts!.domains.split(',').map((d) => d.trim()).filter(Boolean)
-      : [...DEFAULT_DOMAINS];
-
     const tools = parseToolsArg(opts!.tools!);
     const sources = opts!.source!.map((s) => parseSourceArg(s, repoRoot));
 
-    // Check duplicate source names
     const seen = new Set<string>();
     for (const s of sources) {
       if (seen.has(s.name)) {
@@ -167,45 +404,25 @@ export async function initCommand(
       seen.add(s.name);
     }
 
-    const config: BridgeConfig = {
-      version: VERSION,
-      domains,
-      tools,
-      sources,
-    };
+    await fetchSources(repoRoot, sources);
 
-    await saveConfig(repoRoot, config);
-    await ensureBridgeGitignore(repoRoot);
-    p.log.success('Saved .agent-bridge/config.yml');
-
-    // Fetch remote sources
-    const spinner = p.spinner();
-    spinner.start('Fetching remote sources…');
-    const results = await syncAllSources(repoRoot, config);
-    const fetchErrors = results.filter((r) => r.error);
-    if (fetchErrors.length > 0) {
-      spinner.stop('Some sources failed');
-      for (const err of fetchErrors) {
-        p.log.error(`${err.name}: ${err.error}`);
+    const domainsArg = opts!.domains
+      ? opts!.domains.split(',').map((d) => d.trim()).filter(Boolean)
+      : undefined;
+    for (const source of sources) {
+      const names = domainsArg ?? (await listDomains(resolveSourcePath(repoRoot, source)));
+      source.domains = names.map((name): DomainConfig => ({ name }));
+      if (source.domains.length === 0) {
+        p.log.warn(`${source.name}: no domains found — add some or pass --domains.`);
       }
-    } else {
-      spinner.stop('All sources ready');
     }
 
-    // Git hooks (--hooks flag)
+    const config: BridgeConfig = { version: VERSION, tools, sources };
+    await saveConfig(repoRoot, config);
+    p.log.success('Saved .agent-bridge/config.yml');
+
     if (opts!.hooks && isInGitRepo(repoRoot)) {
-      const hookResult = await installGitHooks(repoRoot, opts!.force === true);
-      if (hookResult.installed.length > 0) {
-        p.log.success(`Installed git hooks: ${hookResult.installed.join(', ')}`);
-      }
-      if (hookResult.skipped.length > 0) {
-        p.log.warn(`Skipped hooks: ${hookResult.skipped.join(', ')}`);
-      }
-      if (hookResult.errors.length > 0) {
-        for (const e of hookResult.errors) {
-          p.log.error(`Hook ${e.hook}: ${e.error}`);
-        }
-      }
+      await maybeInstallHooks(repoRoot, opts!.force === true);
     }
 
     p.outro('Done! Run `agent-bridge sync` to sync features.');
@@ -213,212 +430,69 @@ export async function initCommand(
   }
 
   // --- Interactive mode ---
-
-  p.intro('Welcome to Agent Bridge — Project Setup');
+  p.intro('Agent Bridge — Project Setup');
 
   if (await configExists(repoRoot)) {
     const existing = await loadConfig(repoRoot);
     p.log.info(
-      `Config already exists with ${existing.sources?.length ?? 0} source(s). Re-running will overwrite.`
+      `Config already exists with ${existing.sources.length} source(s). Finishing this setup will overwrite it.`
     );
   }
 
-  // --- Domains ---
-  const domainsInput = await p.text({
-    message: 'Domains (comma-separated)',
-    placeholder: DEFAULT_DOMAINS.join(', '),
-    defaultValue: DEFAULT_DOMAINS.join(', '),
-    validate: (v) => {
-      if (!v.trim()) return 'At least one domain is required';
-    },
+  // 1. Tools
+  const tools = await promptTools();
+
+  // 2. Sources (then fetch them so we can show what's inside)
+  const sources = await promptSources(repoRoot);
+  await fetchSources(repoRoot, sources);
+
+  // 3. Domains, grouped by source
+  const pickedDomains = await promptDomains(repoRoot, sources);
+
+  // 4. Optional fine-tuning inside each domain
+  const everything = await p.confirm({
+    message: 'Sync everything inside the selected domains? (No = pick individual skills, agents, files…)',
+    initialValue: true,
   });
-  if (p.isCancel(domainsInput)) {
-    p.cancel('Setup cancelled.');
-    process.exit(1);
-  }
+  cancelled(everything);
 
-  const domains = domainsInput
-    .split(',')
-    .map((d) => d.trim())
-    .filter(Boolean);
-
-  // --- Tools ---
-  const selectedTools = await p.multiselect({
-    message: 'Which tools (IDEs) should receive Agent Bridge files?',
-    options: [
-      ...WELL_KNOWN_TOOLS,
-      { value: CUSTOM_TOOL_SENTINEL, label: 'Other (add custom tool)' },
-    ],
-    required: true,
-  });
-  if (p.isCancel(selectedTools)) {
-    p.cancel('Setup cancelled.');
-    process.exit(1);
-  }
-
-  const tools: ToolConfig[] = (selectedTools as ToolConfig[]).filter(
-    (t) => t.name !== '__custom__'
-  );
-
-  // If the user selected the custom option, prompt for custom tools
-  if ((selectedTools as ToolConfig[]).some((t) => t.name === '__custom__')) {
-    let addingCustom = true;
-    while (addingCustom) {
-      const name = await p.text({
-        message: 'Custom tool name (used for <tool>-- prefix matching)',
-        placeholder: 'windsurf',
-        defaultValue: '',
-        validate: (v) => {
-          if (!v.trim()) return 'Tool name cannot be empty';
-          if (tools.some((t) => t.name === v.trim())) return 'Tool name already used';
-        },
-      });
-      if (p.isCancel(name)) break;
-
-      const folder = await p.text({
-        message: `Target folder for "${name}"`,
-        placeholder: `.${name}`,
-        defaultValue: '',
-        validate: (v) => {
-          if (!v.trim()) return 'Folder cannot be empty';
-          if (tools.some((t) => t.folder === v.trim())) return 'Folder already used by another tool';
-        },
-      });
-      if (p.isCancel(folder)) break;
-
-      tools.push({ name: name.trim(), folder: folder.trim() });
-
-      const addMore = await p.confirm({
-        message: 'Add another custom tool?',
-        initialValue: false,
-      });
-      if (p.isCancel(addMore) || !addMore) {
-        addingCustom = false;
-      }
-    }
-
-    if (tools.length === 0) {
-      p.cancel('At least one tool is required.');
-      process.exit(1);
+  const toolNames = tools.map((t) => t.name);
+  for (const source of sources) {
+    const domains = pickedDomains.get(source.name) ?? [];
+    source.domains = [];
+    for (const domain of domains) {
+      const include = everything
+        ? undefined
+        : await promptInclude(resolveSourcePath(repoRoot, source), source.name, domain, toolNames);
+      source.domains.push(include ? { name: domain, include } : { name: domain });
     }
   }
-
-  // --- Sources ---
-  const sources: SourceConfig[] = [];
-
-  const addSource = async (): Promise<boolean> => {
-    const source = await p.text({
-      message: 'Source URL or local path',
-      placeholder: 'https://github.com/org/repo.git',
-      defaultValue: '',
-      validate: (v) => {
-        if (!v.trim()) return 'Source URL/path cannot be empty';
-        const derived = deriveSourceName(v.trim());
-        if (sources.some((s) => s.name === derived))
-          return `Source name "${derived}" (derived from URL) already used`;
-      },
-    });
-    if (p.isCancel(source)) return false;
-
-    const name = deriveSourceName(source.trim());
-    const entry: SourceConfig = { name, source: source.trim() };
-
-    // Resolve local paths to absolute
-    if (!isRemoteSource(entry.source)) {
-      entry.source = resolve(repoRoot, entry.source);
-    }
-
-    // Ask for branch if remote
-    if (isRemoteSource(entry.source)) {
-      const branch = await p.text({
-        message: 'Branch (leave empty for remote default)',
-        placeholder: 'main',
-        defaultValue: '',
-      });
-      if (p.isCancel(branch)) return false;
-      if (branch.trim()) {
-        entry.branch = branch.trim();
-      }
-    }
-
-    sources.push(entry);
-    return true;
-  };
-
-  p.log.info('Add at least one source.');
-  let addingSource = true;
-  while (addingSource) {
-    const added = await addSource();
-    if (!added) {
-      if (sources.length === 0) {
-        p.cancel('At least one source is required.');
-        process.exit(1);
-      }
-      break;
-    }
-
-    const addMore = await p.confirm({
-      message: 'Add another source?',
-      initialValue: false,
-    });
-    if (p.isCancel(addMore) || !addMore) {
-      addingSource = false;
-    }
+  // Sources without any picked domain contribute nothing — drop them.
+  const activeSources = sources.filter((s) => (s.domains?.length ?? 0) > 0);
+  for (const s of sources) {
+    if (!activeSources.includes(s)) p.log.warn(`${s.name}: no domains selected — source dropped from config.`);
   }
 
-  const config: BridgeConfig = {
-    version: VERSION,
-    domains,
-    tools,
-    sources,
-  };
-
+  const config: BridgeConfig = { version: VERSION, tools, sources: activeSources };
   await saveConfig(repoRoot, config);
-  await ensureBridgeGitignore(repoRoot);
-  p.log.success('Saved .agent-bridge/config.yml');
+  p.log.success('Saved .agent-bridge/config.yml — commit this file.');
 
-  // Clone remote sources
-  const s = p.spinner();
-  s.start('Fetching remote sources…');
-  const results = await syncAllSources(repoRoot, config);
-  const errors = results.filter((r) => r.error);
-  if (errors.length > 0) {
-    s.stop('Some sources failed');
-    for (const err of errors) {
-      p.log.error(`${err.name}: ${err.error}`);
-    }
-  } else {
-    s.stop('All sources ready');
-  }
-
-  // --- Git Hooks ---
+  // 5. Git hooks
   if (isInGitRepo(repoRoot)) {
     const installHooks = await p.confirm({
-      message: 'Install git hooks to auto-sync on checkout/merge?',
+      message: 'Install git hooks to auto-sync after checkout/merge?',
       initialValue: false,
     });
-
     if (!p.isCancel(installHooks) && installHooks) {
-      const hookResult = await installGitHooks(repoRoot, opts?.force === true);
-      
-      if (hookResult.installed.length > 0) {
-        p.log.success(`Installed git hooks: ${hookResult.installed.join(', ')}`);
-      }
-      
-      if (hookResult.skipped.length > 0) {
-        p.log.warn(
-          `Skipped hooks (existing non-Agent-Bridge hooks): ${hookResult.skipped.join(', ')}`
-        );
-        p.log.info('Re-run `agent-bridge init --force` to overwrite, or integrate manually.');
-      }
-      
-      if (hookResult.errors.length > 0) {
-        for (const err of hookResult.errors) {
-          p.log.error(`Hook ${err.hook}: ${err.error}`);
-        }
-      }
+      await maybeInstallHooks(repoRoot, opts?.force === true);
     }
   }
 
-  p.outro('Done! Run `agent-bridge sync` to sync features.');
+  // 6. Sync right away
+  const syncNow = await p.confirm({ message: 'Run `agent-bridge sync` now?', initialValue: true });
+  if (!p.isCancel(syncNow) && syncNow) {
+    await syncCommand(repoRoot);
+    return;
+  }
+  p.outro('Done! Run `agent-bridge sync` whenever you want to pull the latest features.');
 }

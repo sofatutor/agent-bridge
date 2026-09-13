@@ -11,6 +11,7 @@ import {
   hasAgentBridgeHook,
   installGitHooks,
   removeGitHooks,
+  refreshGitHooks,
   AGENT_BRIDGE_HOOKS,
 } from '../lib/git.js';
 
@@ -84,8 +85,8 @@ describe('generateHookScript', () => {
     const script = generateHookScript();
     expect(script).toContain('#!/bin/sh');
     expect(script).toContain('# agent-bridge-hook');
-    expect(script).toContain('agent-bridge update');
     expect(script).toContain('agent-bridge sync');
+    expect(script).not.toContain('agent-bridge update');
   });
 
   it('runs in background to avoid blocking', () => {
@@ -219,7 +220,7 @@ describe('installGitHooks', () => {
     // Verify it was updated with new content
     const content = await readFile(join(hooksDir, 'post-checkout'), 'utf-8');
     expect(content).not.toContain('old content');
-    expect(content).toContain('agent-bridge update');
+    expect(content).toContain('agent-bridge sync');
   });
 });
 
@@ -281,5 +282,41 @@ describe('removeGitHooks', () => {
     // Verify hook still exists
     const content = await readFile(join(hooksDir, 'post-checkout'), 'utf-8');
     expect(content).toContain('custom');
+  });
+});
+
+describe('refreshGitHooks', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await fsRealpath(await mkdtemp(join(tmpdir(), 'agent-bridge-refresh-')));
+    execSync('git init', { cwd: tmpDir, stdio: 'pipe' });
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('rewrites only hooks carrying the Agent Bridge marker', async () => {
+    const hooksDir = getGitHooksDir(tmpDir);
+    await mkdir(hooksDir, { recursive: true });
+    // Old-style hook we installed
+    await writeFile(join(hooksDir, 'post-merge'), '#!/bin/sh\n# agent-bridge-hook\nagent-bridge update && agent-bridge sync\n', 'utf-8');
+    // User's own hook
+    await writeFile(join(hooksDir, 'post-checkout'), '#!/bin/sh\necho mine\n', 'utf-8');
+
+    const refreshed = await refreshGitHooks(tmpDir);
+    expect(refreshed).toEqual(['post-merge']);
+
+    const merged = await readFile(join(hooksDir, 'post-merge'), 'utf-8');
+    expect(merged).toContain('agent-bridge sync');
+    expect(merged).not.toContain('agent-bridge update');
+    expect(await readFile(join(hooksDir, 'post-checkout'), 'utf-8')).toBe('#!/bin/sh\necho mine\n');
+  });
+
+  it('does nothing outside a git repo', async () => {
+    const plain = await mkdtemp(join(tmpdir(), 'agent-bridge-plain-'));
+    expect(await refreshGitHooks(plain)).toEqual([]);
+    await rm(plain, { recursive: true, force: true });
   });
 });

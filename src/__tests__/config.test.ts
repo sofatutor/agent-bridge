@@ -14,6 +14,8 @@ import {
   validateConfig,
   BRIDGE_DIR,
   CONFIG_FILENAME,
+  sourceDomains,
+  isIncluded,
   type BridgeConfig,
 } from '../lib/config.js';
 
@@ -358,5 +360,120 @@ describe('validateConfig', () => {
     });
     const result = validateConfig(cfg);
     expect(result.ok).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-source domains & include lists (0.14+)
+// ---------------------------------------------------------------------------
+
+describe('per-source domains', () => {
+  it('accepts bare-string domains and normalizes them to objects', () => {
+    const cfg = {
+      tools: [{ name: 'vscode', folder: '.github' }],
+      sources: [{ name: 'hub', source: '/abs/hub', domains: ['shared', { name: 'backend', include: ['skills'] }] }],
+    };
+    expect(validateConfig(cfg).ok).toBe(true);
+  });
+
+  it('fails when a source has no domains and there is no top-level fallback', () => {
+    const cfg = {
+      tools: [{ name: 'vscode', folder: '.github' }],
+      sources: [{ name: 'hub', source: '/abs/hub' }],
+    };
+    const result = validateConfig(cfg);
+    expect(result.ok).toBe(false);
+    expect(result.errors[0]).toContain('no domains');
+  });
+
+  it('accepts legacy configs: top-level domains, none per source', () => {
+    expect(validateConfig(validConfig()).ok).toBe(true);
+  });
+
+  it('rejects include paths deeper than two segments or with unsafe characters', () => {
+    const bad = (include: string[]) =>
+      validateConfig({
+        tools: [{ name: 'vscode', folder: '.github' }],
+        sources: [{ name: 'hub', source: '/abs/hub', domains: [{ name: 'shared', include }] }],
+      });
+    expect(bad(['skills/a/b']).ok).toBe(false);
+    expect(bad(['../etc']).ok).toBe(false);
+    expect(bad(['skills/deploy', 'AGENTS.md', 'cursor--settings.json']).ok).toBe(true);
+  });
+
+  it('rejects duplicate domains inside one source', () => {
+    const result = validateConfig({
+      tools: [{ name: 'vscode', folder: '.github' }],
+      sources: [{ name: 'hub', source: '/abs/hub', domains: ['shared', 'shared'] }],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errors[0]).toContain('Duplicate domain');
+  });
+});
+
+describe('sourceDomains', () => {
+  it('prefers the source\'s own domains', () => {
+    const cfg = validConfig({
+      sources: [{ name: 'hub', source: '/abs/hub', domains: [{ name: 'x' }] }],
+    });
+    expect(sourceDomains(cfg, cfg.sources[0])).toEqual([{ name: 'x' }]);
+  });
+
+  it('falls back to legacy top-level domains', () => {
+    const cfg = validConfig({ domains: ['a', 'b'] });
+    expect(sourceDomains(cfg, cfg.sources[0])).toEqual([{ name: 'a' }, { name: 'b' }]);
+  });
+});
+
+describe('isIncluded', () => {
+  it('includes everything when no include list', () => {
+    expect(isIncluded({ name: 'd' }, 'skills/anything')).toBe(true);
+  });
+
+  it('matches a whole feature type and its children', () => {
+    const d = { name: 'd', include: ['skills'] };
+    expect(isIncluded(d, 'skills')).toBe(true);
+    expect(isIncluded(d, 'skills/deploy')).toBe(true);
+    expect(isIncluded(d, 'agents')).toBe(false);
+    expect(isIncluded(d, 'AGENTS.md')).toBe(false);
+  });
+
+  it('matches a single feature and keeps its parent type visible', () => {
+    const d = { name: 'd', include: ['skills/deploy'] };
+    expect(isIncluded(d, 'skills')).toBe(true);
+    expect(isIncluded(d, 'skills/deploy')).toBe(true);
+    expect(isIncluded(d, 'skills/other')).toBe(false);
+  });
+
+  it('matches flat files exactly', () => {
+    const d = { name: 'd', include: ['AGENTS.md'] };
+    expect(isIncluded(d, 'AGENTS.md')).toBe(true);
+    expect(isIncluded(d, 'CLAUDE.md')).toBe(false);
+  });
+});
+
+describe('saveConfig domains', () => {
+  let tmp: string;
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'agent-bridge-compact-'));
+  });
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it('always writes domains as objects and round-trips', async () => {
+    const cfg: BridgeConfig = {
+      tools: [{ name: 'vscode', folder: '.github' }],
+      sources: [
+        { name: 'hub', source: '/abs/hub', domains: [{ name: 'shared' }, { name: 'backend', include: ['skills/deploy'] }] },
+      ],
+    };
+    await saveConfig(tmp, cfg);
+    const raw = await readFile(configPath(tmp), 'utf-8');
+    expect(raw).toContain('- name: shared\n');
+    expect(raw).toContain('name: backend');
+    expect(raw).not.toContain('domains: null');
+    const loaded = await loadConfig(tmp);
+    expect(loaded.sources[0].domains).toEqual(cfg.sources[0].domains);
   });
 });

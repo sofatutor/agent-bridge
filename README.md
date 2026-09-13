@@ -1,231 +1,123 @@
 # Agent Bridge
 
-A CLI tool that syncs AI agent configurations (skills, agents, prompts, ...etc.) from shared sources into your project's tool directories (`.github/`, `.cursor/`, `.claude/`, ..etc.).
+Sync AI agent skills, agents, prompts and instructions from a shared repo into your project's tool folders (`.github/`, `.cursor/`, `.claude/`, …).
 
-### Why Agent Bridge?
+One source of truth. Every project. Every tool.
 
-As teams adopt AI coding tools, agent instructions quickly scatter across projects with no shared structure. Agent Bridge solves this by letting you **centralize and distribute** AI agent features across any number of projects, teams, and repositories — using **conventions over configuration**, with no manifests or mapping files required.
-
-- **Convention over configuration** — features are discovered from the filesystem automatically. No manifests, no mapping files — just organize by domain and feature type.
-- **Tool-agnostic, tool-aware** — syncs to all configured tools by default, while the `<tool>--` prefix convention lets you target features to specific tools (VS Code, Cursor, Claude Code, or custom tools) when needed.
-- **Extensible** — not limited to skills, agents, prompts, or instructions. Any new feature type that tools introduce is automatically supported — just add a folder to your source.
-- **Multiple sources** — pull from any combination of Git repositories (HTTPS/SSH) and local paths. Mix company-wide standards with team-specific or project-specific sources.
-- **Multi-domain organization** — structure features by domain (`backend`, `frontend`, `shared`, or your own) so each project pulls only what it needs.
-- **Non-destructive** — previously defined skills, agents, prompts, and other tool files are **never** touched, modified, or deleted.
-
-## Prerequisites
-
-- Git (optional — needed only for remote sources)
-- Node.js ≥ 18
-
-## Installation
-
-```bash
-npm install -g @sofatutor/agent-bridge
-```
-
-Or install locally as a dev dependency:
-
-```bash
-npm install --save-dev @sofatutor/agent-bridge
-```
-
-Or run directly with `npx`:
+## Quick start
 
 ```bash
 npx @sofatutor/agent-bridge init
 ```
 
-## Quick Start
+That's it. The wizard walks you through three questions:
 
-### 1. Initialize
+1. **Tools** — VS Code, Cursor, Claude, Pi, or a custom folder.
+2. **Sources** — a Git URL (or local path) that holds your shared skills, e.g. `https://github.com/sofatutor/ai-hub.git`.
+3. **Domains** — tick the folders you want from each source. Optionally pick single skills/agents/files.
+
+It saves `.agent-bridge/config.yml`, offers to install git hooks, and syncs immediately.
+
+Then commit the config:
 
 ```bash
-agent-bridge init
+git add .agent-bridge/config.yml && git commit -m "chore: add agent-bridge config"
 ```
 
-The interactive init flow will:
-1. Ask which domains to use (e.g. `backend`, `frontend`, `shared`).
-2. Ask which tools to configure — choose from well-known presets (VS Code, Cursor, Claude) or add custom tools.
-3. Ask for sources — Git repos (HTTPS/SSH) or local paths, with optional branch.
-4. Generate `.agent-bridge/config.yml`.
-5. Clone any remote sources.
-6. Create `.agent-bridge/.gitignore` (ignores cloned repos, keeps config).
-7. Optionally install git hooks to auto-sync on checkout/merge.
+Pull the latest features any time:
 
-#### Non-Interactive Mode
+```bash
+npx @sofatutor/agent-bridge sync
+```
 
-Pass `--tools` and `--source` to skip all prompts:
+### Install for keeps
+
+```bash
+npm install -g @sofatutor/agent-bridge        # global
+npm install --save-dev @sofatutor/agent-bridge # per project
+```
+
+### Scripted setup (CI, postinstall)
 
 ```bash
 agent-bridge init \
   --tools cursor,vscode,claude \
-  --source https://github.com/org/repo.git#main
-```
-
-Multiple sources and custom tools are supported:
-
-```bash
-agent-bridge init \
-  --domains shared,backend \
-  --tools cursor,windsurf:.windsurf \
-  --source https://github.com/org/repo.git#main \
-  --source /local/path \
+  --source https://github.com/sofatutor/ai-hub.git#main \
+  --domains sofatutor-shared,sofatutor-main \
   --hooks
-```
-
-| Option              | Description                                                                              |
-| ------------------- | ---------------------------------------------------------------------------------------- |
-| `--tools <list>`    | Comma-separated tool names (`cursor`, `vscode`, `claude`) or `name:folder` pairs         |
-| `-s, --source <url>`| Source URL or path (repeatable). Append `#branch` for a specific branch                  |
-| `--domains <list>`  | Comma-separated domain list (default: `backend,frontend,shared`)                         |
-| `--hooks`           | Auto-install git hooks without prompting                                                 |
-
-After init, commit `.agent-bridge/config.yml` to your repo.
-
-### 2. Sync
-
-```bash
 agent-bridge sync
 ```
 
-Fetches remote sources, discovers features, and copies them into your tool folders.
+Omit `--domains` to take every domain in the source.
 
-Run this whenever:
-- A source repository has new or changed features.
-- You add, rename, or remove sources in `config.yml`.
-- You change tool or domain configuration.
+## What you get
 
-### 3. Update
-
-```bash
-agent-bridge update
+```
+my-project/
+├── .agent-bridge/config.yml     ← the only file you commit
+├── .github/skills/code-review/  ← synced (VS Code)
+├── .cursor/skills/code-review/  ← synced (Cursor)
+└── .claude/skills/code-review/  ← synced (Claude)
 ```
 
-Pulls the latest changes from all remote sources. Local sources require no update.
+- **Convention over configuration** — a source is just folders: `<domain>/<feature-type>/<feature>/`. No manifests.
+- **Pick what you need** — whole domains, or individual skills, agents and files per domain.
+- **Tool-aware** — `cursor--rules/` goes to Cursor only; everything else goes to every tool.
+- **Non-destructive** — Agent Bridge only ever touches files it created. Your own skills are safe.
+- **Stays fresh** — `sync` fetches sources and reconciles; git hooks can do it for you after checkout/merge.
 
-After updating, run `agent-bridge sync` to reconcile features.
+## Commands
 
-### 4. Opt Out
+| Command                 | What it does                                                   |
+| ----------------------- | -------------------------------------------------------------- |
+| `agent-bridge init`     | Interactive setup (or scripted with `--tools`/`--source`)       |
+| `agent-bridge sync`     | Fetch sources and sync features into your tool folders          |
+| `agent-bridge opt-out`  | Remove everything Agent Bridge created from this repo           |
 
-```bash
-agent-bridge opt-out
+All commands accept `--cwd <path>`.
+
+> `agent-bridge update` was merged into `sync` in 0.14. The old command still works and simply runs `sync`.
+
+## Config at a glance
+
+```yaml
+tools:
+  - name: claude
+    folder: .claude
+sources:
+  - name: ai-hub
+    source: https://github.com/sofatutor/ai-hub.git
+    branch: main
+    domains:
+      - name: sofatutor-shared       # everything in this domain
+      - name: sofatutor-main         # only these bits
+        include:
+          - skills/preview
+          - vscode--agents
+          - AGENTS.md
 ```
 
-`opt-out` is non-interactive and removes Agent Bridge from the current repository by:
-- Removing synced feature and tool-root entries tracked in `.agentbridge` manifests
-- Removing Agent Bridge-managed git hooks (`post-checkout`, `post-merge`)
-- Removing `config.yml` and cloned sources from `.agent-bridge/`
-- Leaving a `.agent-bridge/optout` tombstone behind so a `postinstall` guard won't silently reinstall
+Full reference: [Configuration](docs/Configuration.md).
 
-Notes:
-- Root files like `AGENTS.md`, `CLAUDE.md`, and `SYSTEM.md` are not removed by `opt-out`.
-- Existing non-Agent-Bridge hooks are preserved.
-- The tombstone lives at `.agent-bridge/optout` and is **gitignored by default**, so opt-out is local to your machine. Force-add it (`git add -f .agent-bridge/optout`) to commit a repo-wide opt-out.
-- While the tombstone exists, `agent-bridge init` and `agent-bridge sync` are no-ops.
-- To re-enable, run `agent-bridge init --force` (which clears the tombstone) or delete `.agent-bridge/optout`.
+## Docs
 
-#### Opting out with a `postinstall` hook
+| Page                                        | Read it when…                                        |
+| ------------------------------------------- | ---------------------------------------------------- |
+| [Configuration](docs/Configuration.md)      | you want to edit `config.yml` by hand                |
+| [Conventions](docs/Conventions.md)          | you're authoring a source repo (like `ai-hub`)       |
+| [CLI Reference](docs/CLI-Reference.md)      | you need every flag, plus git hooks and opt-out      |
+| [Sync Strategy](docs/Sync-Strategy.md)      | you wonder what sync touches and what it never does  |
+| [Upgrading](docs/Upgrading.md)              | you're coming from 0.13 or earlier                   |
+| [Troubleshooting](docs/Troubleshooting.md)  | something's off                                      |
 
-If a project auto-installs Agent Bridge via `postinstall`, guard it on `.agent-bridge`:
-
-```json
-"postinstall": "test -d .agent-bridge || (npx agent-bridge init --domains … --tools … --source … --hooks && npx agent-bridge sync) || true"
-```
-
-Because `opt-out` keeps the `.agent-bridge/` directory (holding only the tombstone), `test -d .agent-bridge` stays true after opting out and the guard short-circuits — nothing is reinstalled. If your guard invokes `init`/`sync` directly instead, they still no-op on the tombstone.
-
-## Git Hooks (Auto-Sync)
-
-When running `agent-bridge init` inside a Git repository, you'll be prompted to install git hooks that automatically keep your AI agent configurations up to date. If enabled, Agent Bridge installs:
-
-- **post-checkout** — runs after `git checkout` (switching branches)
-- **post-merge** — runs after `git merge` or `git pull`
-
-These hooks run `agent-bridge update && agent-bridge sync` in the background, so your workflow isn't blocked.
-
-### How It Works
-
-The hooks execute asynchronously with a short delay to let Git complete its operations. They:
-1. Check if `agent-bridge` is available globally
-2. Fall back to `npx @sofatutor/agent-bridge` if not
-3. Run update and sync silently in the background
-
-### Skipping Existing Hooks
-
-If you already have custom `post-checkout` or `post-merge` hooks, Agent Bridge will skip them to avoid conflicts. You can manually integrate Agent Bridge into your existing hooks by adding:
-
-```sh
-# At the end of your existing hook
-(
-  sleep 1
-  agent-bridge update && agent-bridge sync
-) >/dev/null 2>&1 &
-```
-
-### Removing Hooks
-
-Agent Bridge marks its hooks with a special comment.
-
-Recommended: run `agent-bridge opt-out` to remove Agent Bridge-managed hooks and state.
-
-Manual alternative: delete the hook files:
-
-```bash
-rm .git/hooks/post-checkout .git/hooks/post-merge
-```
-
-Or re-run `agent-bridge init` — Agent Bridge hooks are automatically updated on re-init.
-
-## CLI Commands
-
-| Command               | Description                                            |
-| --------------------- | ------------------------------------------------------ |
-| `agent-bridge init`   | Interactive setup — creates `.agent-bridge/config.yml` (supports [non-interactive mode](#non-interactive-mode)) |
-| `agent-bridge sync`   | Fetch sources, discover features, reconcile files      |
-| `agent-bridge update` | Fetch latest changes for all remote sources            |
-| `agent-bridge opt-out`| Non-interactive cleanup of Agent Bridge-managed state  |
-
-### Global Options
-
-| Option         | Description                                                                              |
-| -------------- | ---------------------------------------------------------------------------------------- |
-| `--cwd <path>` | Override the working directory. Defaults to the Git root, or `cwd` if not in a Git repo. |
-
-Examples:
-
-```bash
-# Run sync for a specific project in a monorepo
-agent-bridge sync --cwd ./packages/api
-
-# Point at a project outside the current directory
-agent-bridge sync --cwd /path/to/my-project
-```
-
-## Documentation
-
-- [Configuration](docs/configuration.md) — config file reference, fields, source types
-- [Conventions](docs/conventions.md) — source directory structure, tool-prefix routing, authoring features
-- [Sync Strategy](docs/sync-strategy.md) — marker files, project structure after sync, cleanup behavior
-
-## Troubleshooting
-
-| Symptom                      | Fix                                                                  |
-| ---------------------------- | -------------------------------------------------------------------- |
-| `config.yml not found`       | Run `agent-bridge init` from the repo root                           |
-| Source clone failed          | Check the Git URL and your SSH/HTTPS credentials                     |
-| Duplicate feature name error | Rename one of the conflicting features across sources                |
-| Local source path not found  | Verify the path in `config.yml` is correct relative to the repo root |
-| Path conflict error          | A non-managed folder exists at the destination — rename or remove it |
-| Git hooks not installed      | Run `agent-bridge init` from inside a Git repository                 |
-| Hooks skipped (existing)     | Existing non-Agent-Bridge hooks are preserved; integrate manually    |
-| Remove Agent Bridge from repo| Run `agent-bridge opt-out`                                            |
+The same pages are published to the [GitHub wiki](https://github.com/sofatutor/agent-bridge/wiki).
 
 ## Development
 
 ```bash
 npm install
-npm run build       # Package the CLI with Vite+
-npm test            # Run all tests
-npm run test:watch  # Watch mode
+npm run check   # typecheck + tests
+npm run build   # bundle the CLI into dist/
 ```
+
+Requires Node ≥ 18 and Git (for remote sources).

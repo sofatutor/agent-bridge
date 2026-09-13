@@ -40,9 +40,7 @@ export async function syncCommand(cwd?: string, _opts?: unknown): Promise<void> 
   // --- Phase 1: Load & validate config ---
   s.start('Loading configuration…');
 
-  const config = await loadConfig(repoRoot);
-
-  // Run pending migrations if config version is outdated
+  // Run pending migrations first so we work with the upgraded config
   const migrationResult = await runMigrations(repoRoot);
   if (migrationResult) {
     p.log.info(
@@ -53,10 +51,11 @@ export async function syncCommand(cwd?: string, _opts?: unknown): Promise<void> 
     );
   }
 
+  const config = await loadConfig(repoRoot);
   s.stop('Configuration valid');
 
-  // --- Phase 2: Sync sources ---
-  s.start('Syncing sources…');
+  // --- Phase 2: Fetch sources (clone new, pull existing) ---
+  s.start('Fetching sources…');
 
   const sourceResults = await syncAllSources(repoRoot, config);
   const sourceErrors = sourceResults.filter((r) => r.error);
@@ -82,7 +81,7 @@ export async function syncCommand(cwd?: string, _opts?: unknown): Promise<void> 
     }
   }
 
-  s.stop('Sources synced');
+  s.stop('Sources up to date');
 
   // --- Phase 3: Discover & validate features ---
   s.start('Discovering features…');

@@ -5,7 +5,6 @@ import { stat } from 'node:fs/promises';
 import { Command } from 'commander';
 import { initCommand } from './commands/init.js';
 import { syncCommand } from './commands/sync.js';
-import { updateCommand } from './commands/update.js';
 import { optOutCommand } from './commands/opt-out.js';
 import { VERSION } from './lib/version.js';
 
@@ -57,10 +56,10 @@ const program = new Command()
 
 program
   .command('init')
-  .description('Initialize Agent Bridge (creates .agent-bridge/config.yml)')
+  .description('Set up Agent Bridge: pick tools, sources and domains (creates .agent-bridge/config.yml)')
   .option('--cwd <path>', 'Override the working directory')
   .option('--force', 'Overwrite existing non-Agent-Bridge git hooks')
-  .option('--domains <list>', 'Comma-separated domain list (default: backend,frontend,shared)')
+  .option('--domains <list>', 'Comma-separated domain list (default: every domain found in each source)')
   .option('--tools <list>', 'Comma-separated tool names (cursor,vscode,claude) or name:folder pairs')
   .option('-s, --source <url>', 'Source URL or path (repeatable, append #branch for branch)', collect, [])
   .option('--hooks', 'Auto-install git hooks without prompting')
@@ -68,15 +67,21 @@ program
 
 program
   .command('sync')
-  .description('Fetch sources, discover features, and sync files')
+  .description('Fetch the latest sources and sync features into your tool folders')
   .option('--cwd <path>', 'Override the working directory')
   .action(await withCwdValidation(syncCommand));
 
+// `update` was merged into `sync` (0.14.0). Kept hidden so hooks installed by
+// older versions (`agent-bridge update && agent-bridge sync`) keep working.
 program
-  .command('update')
-  .description('Fetch latest changes for all remote sources')
+  .command('update', { hidden: true })
   .option('--cwd <path>', 'Override the working directory')
-  .action(await withCwdValidation(updateCommand));
+  .action(
+    await withCwdValidation(async (cwd) => {
+      console.error('`agent-bridge update` is deprecated — running `agent-bridge sync` instead (it fetches sources too).');
+      await syncCommand(cwd);
+    })
+  );
 
 program
   .command('opt-out')

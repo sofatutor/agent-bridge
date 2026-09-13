@@ -13,6 +13,8 @@ import {
   detectRootFileDuplicates,
   scanToolRootEntries,
   detectToolRootDuplicates,
+  listDomains,
+  listDomainContents,
   type Feature,
 } from '../lib/manifest.js';
 import type { BridgeConfig } from '../lib/config.js';
@@ -809,5 +811,96 @@ describe('detectToolRootDuplicates', () => {
 
   it('returns empty for empty input', () => {
     expect(detectToolRootDuplicates([])).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// include filtering (per-source domains)
+// ---------------------------------------------------------------------------
+
+describe('include filtering', () => {
+  let tmpDir: string;
+  let hub: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'agent-bridge-include-'));
+    hub = join(tmpDir, 'hub');
+    await buildSourceTree(hub, {
+      'shared/skills/deploy': ['SKILL.md'],
+      'shared/skills/review': ['SKILL.md'],
+      'shared/agents/helper': ['AGENT.md'],
+      'shared/vscode--prompts': ['hello.prompt.md'],
+      'shared': ['AGENTS.md', 'CLAUDE.md', 'cursor--settings.json', 'README.md'],
+      'backend/skills/db': ['SKILL.md'],
+    });
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function cfg(include?: string[]): BridgeConfig {
+    return {
+      tools: [{ name: 'vscode', folder: '.github' }, { name: 'cursor', folder: '.cursor' }],
+      sources: [{ name: 'hub', source: hub, domains: [include ? { name: 'shared', include } : { name: 'shared' }] }],
+    };
+  }
+
+  it('without include, everything in the domain is scanned', async () => {
+    const c = cfg();
+    const types = await discoverFeatureTypes(tmpDir, c);
+    expect(types).toEqual(['agents', 'skills', 'vscode--prompts']);
+    const features = await scanFeatures(tmpDir, c, types);
+    expect(features.map((f) => f.name).sort()).toEqual(['deploy', 'hello.prompt.md', 'helper', 'review']);
+    expect((await scanRootFiles(tmpDir, c)).map((r) => r.fileName).sort()).toEqual(['AGENTS.md', 'CLAUDE.md']);
+    expect((await scanToolRootEntries(tmpDir, c)).map((e) => e.name)).toEqual(['settings.json']);
+  });
+
+  it('a whole feature type can be included', async () => {
+    const c = cfg(['skills']);
+    const types = await discoverFeatureTypes(tmpDir, c);
+    expect(types).toEqual(['skills']);
+    const features = await scanFeatures(tmpDir, c, types);
+    expect(features.map((f) => f.name).sort()).toEqual(['deploy', 'review']);
+    expect(await scanRootFiles(tmpDir, c)).toEqual([]);
+    expect(await scanToolRootEntries(tmpDir, c)).toEqual([]);
+  });
+
+  it('a single feature and single files can be included', async () => {
+    const c = cfg(['skills/deploy', 'AGENTS.md', 'cursor--settings.json']);
+    const types = await discoverFeatureTypes(tmpDir, c);
+    const features = await scanFeatures(tmpDir, c, types);
+    expect(features.map((f) => f.name)).toEqual(['deploy']);
+    expect((await scanRootFiles(tmpDir, c)).map((r) => r.fileName)).toEqual(['AGENTS.md']);
+    expect((await scanToolRootEntries(tmpDir, c)).map((e) => e.name)).toEqual(['settings.json']);
+  });
+
+  it('legacy top-level domains apply to every source', async () => {
+    const c: BridgeConfig = {
+      domains: ['shared', 'backend'],
+      tools: [{ name: 'vscode', folder: '.github' }],
+      sources: [{ name: 'hub', source: hub }],
+    };
+    const features = await scanFeatures(tmpDir, c, await discoverFeatureTypes(tmpDir, c));
+    expect(features.map((f) => f.name).sort()).toEqual(['db', 'deploy', 'hello.prompt.md', 'helper', 'review']);
+  });
+
+  it('listDomains returns top-level folders, skipping hidden ones', async () => {
+    await mkdir(join(hub, '.git'), { recursive: true });
+    await writeFile(join(hub, 'README.md'), '', 'utf-8');
+    expect(await listDomains(hub)).toEqual(['backend', 'shared']);
+    expect(await listDomains(join(tmpDir, 'nope'))).toEqual([]);
+  });
+
+  it('listDomainContents lists feature types, their features, and syncable files', async () => {
+    const contents = await listDomainContents(hub, 'shared', ['cursor']);
+    expect(contents.featureTypes).toEqual([
+      { name: 'agents', features: ['helper'] },
+      { name: 'skills', features: ['deploy', 'review'] },
+      { name: 'vscode--prompts', features: ['hello.prompt.md'] },
+    ]);
+    // README.md is not a root file; cursor--settings.json only counts because cursor is configured
+    expect(contents.files).toEqual(['AGENTS.md', 'CLAUDE.md', 'cursor--settings.json']);
+    expect((await listDomainContents(hub, 'shared', [])).files).toEqual(['AGENTS.md', 'CLAUDE.md']);
   });
 });

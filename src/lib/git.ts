@@ -49,15 +49,15 @@ const HOOK_MARKER = '# agent-bridge-hook';
 
 /**
  * Generate the hook script content.
- * Runs update and sync in the background, logging to `.agent-bridge/hook.log`
+ * Runs sync in the background, logging to `.agent-bridge/hook.log`
  * (trimmed to the last ~200 lines) so failures are diagnosable.
  */
 export function generateHookScript(): string {
   return `#!/bin/sh
 ${HOOK_MARKER}
 # This hook was installed by Agent Bridge.
-# It runs 'agent-bridge update && agent-bridge sync' in the background
-# to keep your AI agent configurations up to date.
+# It runs 'agent-bridge sync' in the background to keep your AI agent
+# configurations up to date.
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
 LOG_DIR="\${REPO_ROOT:-.}/.agent-bridge"
@@ -72,9 +72,9 @@ mkdir -p "\$LOG_DIR" 2>/dev/null
   {
     echo "--- $(date '+%Y-%m-%dT%H:%M:%S%z') agent-bridge hook ---"
     if command -v agent-bridge >/dev/null 2>&1; then
-      agent-bridge update && agent-bridge sync
+      agent-bridge sync
     elif command -v npx >/dev/null 2>&1; then
-      npx @sofatutor/agent-bridge update && npx @sofatutor/agent-bridge sync
+      npx @sofatutor/agent-bridge sync
     else
       echo "agent-bridge not found (install globally or ensure npx is available)"
     fi
@@ -191,6 +191,25 @@ export async function installGitHooks(
   }
 
   return result;
+}
+
+/**
+ * Rewrite hooks that Agent Bridge installed earlier with the current script.
+ * Hooks we did not install (no marker) and missing hooks are left alone.
+ */
+export async function refreshGitHooks(repoRoot: string): Promise<AgentBridgeHook[]> {
+  const refreshed: AgentBridgeHook[] = [];
+  if (!isInGitRepo(repoRoot)) return refreshed;
+
+  const hooksDir = getGitHooksDir(repoRoot);
+  for (const hookName of AGENT_BRIDGE_HOOKS) {
+    const hookPath = join(hooksDir, hookName);
+    if (!(await hasAgentBridgeHook(hookPath))) continue;
+    await writeFile(hookPath, generateHookScript(), 'utf-8');
+    await chmod(hookPath, 0o755);
+    refreshed.push(hookName);
+  }
+  return refreshed;
 }
 
 /**

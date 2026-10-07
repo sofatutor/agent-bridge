@@ -928,3 +928,33 @@ describe('reconcileToolRootEntries', () => {
     expect(content).toBe('{"v": 2}');
   });
 });
+
+// ---------------------------------------------------------------------------
+// applySourceOverrides (sync --source name=path)
+// ---------------------------------------------------------------------------
+
+import { applySourceOverrides } from '../commands/sync.js';
+
+describe('applySourceOverrides', () => {
+  const config: BridgeConfig = {
+    tools: [{ name: 'vscode', folder: '.github' }],
+    sources: [{ name: 'hub', source: 'git@github.com:org/hub.git', branch: 'main', domains: [{ name: 'shared' }] }],
+  };
+
+  it('replaces the source location and drops the branch, keeping the selection', () => {
+    const out = applySourceOverrides(config, ['hub=/tmp/hub'], '/repo');
+    expect(out.sources[0].source).toBe('/tmp/hub');
+    expect(out.sources[0].branch).toBeUndefined();
+    expect(out.sources[0].domains).toEqual([{ name: 'shared' }]);
+    expect(config.sources[0].source).toBe('git@github.com:org/hub.git'); // not mutated
+  });
+
+  it('resolves relative paths against the repo root', () => {
+    expect(applySourceOverrides(config, ['hub=../hub'], '/repo/app').sources[0].source).toBe('/repo/hub');
+  });
+
+  it('rejects unknown names and malformed values', () => {
+    expect(() => applySourceOverrides(config, ['nope=/x'], '/repo')).toThrow('no source named "nope"');
+    expect(() => applySourceOverrides(config, ['hub'], '/repo')).toThrow('name=path');
+  });
+});

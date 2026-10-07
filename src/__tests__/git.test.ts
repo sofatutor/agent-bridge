@@ -87,6 +87,7 @@ describe('generateHookScript', () => {
     expect(script).toContain('# agent-bridge-hook');
     expect(script).toContain('agent-bridge sync');
     expect(script).not.toContain('agent-bridge update');
+    expect(script).toContain('node_modules/.bin/agent-bridge');
   });
 
   it('runs in background to avoid blocking', () => {

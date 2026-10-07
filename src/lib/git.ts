@@ -71,7 +71,10 @@ mkdir -p "\$LOG_DIR" 2>/dev/null
 
   {
     echo "--- $(date '+%Y-%m-%dT%H:%M:%S%z') agent-bridge hook ---"
-    if command -v agent-bridge >/dev/null 2>&1; then
+    # Prefer the project's own version so every machine runs what package.json pins.
+    if [ -x "\${REPO_ROOT}/node_modules/.bin/agent-bridge" ]; then
+      "\${REPO_ROOT}/node_modules/.bin/agent-bridge" sync
+    elif command -v agent-bridge >/dev/null 2>&1; then
       agent-bridge sync
     elif command -v npx >/dev/null 2>&1; then
       npx @sofatutor/agent-bridge sync

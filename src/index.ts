@@ -11,7 +11,7 @@ import { VERSION } from './lib/version.js';
 export interface CliOptions {
   cwd?: string;
   force?: boolean;
-  // Init-specific options (ignored by other commands)
+  // Init/sync options (ignored by other commands)
   domains?: string;
   tools?: string;
   source?: string[];
@@ -69,6 +69,14 @@ program
   .command('sync')
   .description('Fetch the latest sources and sync features into your tool folders')
   .option('--cwd <path>', 'Override the working directory')
+  .option('--hooks', 'Install or refresh the git hooks (idempotent; safe in postinstall)')
+  .option('--force', 'With --hooks: overwrite existing non-Agent-Bridge hooks')
+  .option(
+    '-s, --source <name=path>',
+    'Read a source from another location for this run, e.g. ai-hub=/tmp/ai-hub (repeatable; CI)',
+    collect,
+    []
+  )
   .action(await withCwdValidation(syncCommand));
 
 // `update` was merged into `sync` (0.14.0). Kept hidden so hooks installed by

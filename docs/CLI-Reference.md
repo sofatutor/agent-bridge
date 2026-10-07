@@ -66,7 +66,27 @@ Per-domain `include` lists are not available as flags; edit `config.yml` (see [C
 4. Stops on duplicates or on a destination that exists but isn't managed by Agent Bridge.
 5. Adds, updates and removes features, root files and tool root files. Prints counts.
 
+| Option                      | Description                                                                                             |
+| --------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `--hooks`                   | Install or refresh the git hooks after syncing. Idempotent; foreign hooks are skipped unless `--force`  |
+| `-s, --source <name=path>`  | For this run only, read source `name` from `path` instead of its configured URL (repeatable). For CI     |
+
 Exit code is non-zero on any error, so it's safe in CI.
+
+### CI / Copilot setup
+
+The committed `config.yml` usually points at an SSH URL the runner can't clone. Clone the hub with a token and point `sync` at it; the committed domain and `include` selection is honored:
+
+```yaml
+- name: Sync AI agent configurations
+  env:
+    GH_TOKEN: ${{ secrets.AI_HUB_PAT }}
+  run: |
+    gh repo clone sofatutor/ai-hub "$RUNNER_TEMP/ai-hub" -- --depth=1
+    npx @sofatutor/agent-bridge sync --source ai-hub="$RUNNER_TEMP/ai-hub"
+```
+
+Running `init --domains …` in CI instead works too, but overwrites the committed selection with whole domains for that run.
 
 > `agent-bridge update` (pre-0.14) is a hidden alias that runs `sync`. Hooks installed by older versions keep working; the first `sync` rewrites them to call `sync` only.
 
@@ -87,6 +107,7 @@ While the tombstone exists, `init` and `sync` are no-ops (exit 0). It is gitigno
 
 `init` can install `post-checkout` and `post-merge` hooks. They run `agent-bridge sync` (falling back to `npx @sofatutor/agent-bridge sync`) in the background after a one-second delay and log to `.agent-bridge/hook.log` (trimmed to 200 lines).
 
+- Hooks run the project's `node_modules/.bin/agent-bridge` first (the version `package.json` pins), then a global install, then `npx`.
 - Hooks are marked with `# agent-bridge-hook` so Agent Bridge only ever overwrites its own.
 - Existing foreign hooks are skipped. Use `--force` to replace them, or add this to your hook:
 
@@ -103,3 +124,11 @@ While the tombstone exists, `init` and `sync` are no-ops (exit 0). It is gitigno
 ```
 
 `opt-out` keeps `.agent-bridge/` (holding only the tombstone), so the guard stays false after opting out and nothing is reinstalled.
+
+Because `config.yml` is committed, `-d .agent-bridge` is already true on a fresh clone and the `init` branch never runs there. To get hooks and a first sync on every machine, add a second line:
+
+```json
+"postinstall": "test -n \"$CI\" -o -d .agent-bridge || (npx @sofatutor/agent-bridge init … --hooks && npx @sofatutor/agent-bridge sync) || true; test -n \"$CI\" && exit 0; npx @sofatutor/agent-bridge sync --hooks || true"
+```
+
+`sync --hooks` is idempotent: it refreshes Agent Bridge's own hooks, never touches foreign ones, and no-ops under the opt-out tombstone.

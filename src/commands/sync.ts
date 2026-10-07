@@ -1,6 +1,7 @@
 import * as p from '@clack/prompts';
-import { loadConfig, isOptedOut, OPT_OUT_MARKER } from '../lib/config.js';
-import { findRepoRoot } from '../lib/git.js';
+import { resolve } from 'node:path';
+import { loadConfig, isOptedOut, OPT_OUT_MARKER, type BridgeConfig } from '../lib/config.js';
+import { findRepoRoot, isInGitRepo, installGitHooks } from '../lib/git.js';
 import { runMigrations } from '../lib/migrations/index.js';
 import {
   discoverFeatureTypes,
@@ -23,7 +24,37 @@ import {
 import { syncAllSources, removeStaleSourceDirs } from '../lib/sources.js';
 import { join } from 'node:path';
 
-export async function syncCommand(cwd?: string, _opts?: unknown): Promise<void> {
+export interface SyncOptions {
+  /** Install/refresh git hooks after a successful sync. */
+  hooks?: boolean;
+  /** With `hooks`: overwrite foreign hooks. */
+  force?: boolean;
+  /** `name=path` overrides: read that source from `path` instead of cloning. */
+  source?: string[];
+}
+
+/**
+ * Apply `--source name=path` overrides. Lets CI point a committed remote
+ * source at a checkout it already has (no SSH key needed) while keeping the
+ * committed domain/include selection. Not persisted.
+ */
+export function applySourceOverrides(config: BridgeConfig, overrides: string[], repoRoot: string): BridgeConfig {
+  if (overrides.length === 0) return config;
+  const sources = config.sources.map((s) => ({ ...s }));
+  for (const raw of overrides) {
+    const eq = raw.indexOf('=');
+    if (eq <= 0) throw new Error(`--source expects name=path, got "${raw}"`);
+    const name = raw.slice(0, eq).trim();
+    const path = raw.slice(eq + 1).trim();
+    const src = sources.find((s) => s.name === name);
+    if (!src) throw new Error(`--source: no source named "${name}" in config.yml`);
+    src.source = resolve(repoRoot, path);
+    delete src.branch;
+  }
+  return { ...config, sources };
+}
+
+export async function syncCommand(cwd?: string, opts?: SyncOptions): Promise<void> {
   const repoRoot = cwd ?? findRepoRoot();
 
   p.intro('Agent Bridge Sync');
@@ -51,7 +82,7 @@ export async function syncCommand(cwd?: string, _opts?: unknown): Promise<void> 
     );
   }
 
-  const config = await loadConfig(repoRoot);
+  const config = applySourceOverrides(await loadConfig(repoRoot), opts?.source ?? [], repoRoot);
   s.stop('Configuration valid');
 
   // --- Phase 2: Fetch sources (clone new, pull existing) ---
@@ -232,6 +263,14 @@ export async function syncCommand(cwd?: string, _opts?: unknown): Promise<void> 
   }
 
   s.stop('Tool root entries synced');
+
+  // --- Phase 7: Git hooks (opt-in; idempotent so postinstall can call it) ---
+  if (opts?.hooks && isInGitRepo(repoRoot)) {
+    const hooks = await installGitHooks(repoRoot, opts.force === true);
+    if (hooks.installed.length > 0) p.log.info(`Git hooks installed: ${hooks.installed.join(', ')}`);
+    if (hooks.skipped.length > 0) p.log.warn(`Hooks skipped (existing non-Agent-Bridge hooks): ${hooks.skipped.join(', ')}`);
+    for (const e of hooks.errors) p.log.error(`Hook ${e.hook}: ${e.error}`);
+  }
 
   p.outro('Sync complete.');
 }

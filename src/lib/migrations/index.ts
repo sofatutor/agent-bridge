@@ -51,6 +51,14 @@ export const migrations: Migration[] = [
       return { ...config, sources };
     },
   },
+  {
+    version: '0.17.0',
+    description: 'git hooks prefer the project-local agent-bridge',
+    migrate: async (repoRoot, config) => {
+      await refreshGitHooks(repoRoot);
+      return config;
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------

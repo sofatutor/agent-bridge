@@ -42,7 +42,7 @@
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.0.0",
     "typescript": "^5.4.0",
-    "vite-plus": "^0.1.15"
+    "vite-plus": "^1.1.0"
   },
   "packageManager": "npm@11.12.1",
   "engines": {
